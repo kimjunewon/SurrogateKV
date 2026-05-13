@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+outputs/
+results/
+logs/
+
+# Keep dataset slots in the repo, but never commit local benchmark data.
+data/**
+!data/
+!data/**/
+!data/**/.gitkeep
