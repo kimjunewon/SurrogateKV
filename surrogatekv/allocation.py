@@ -406,14 +406,26 @@ class SurrogateAllocationMixin:
         max_buyback_lookup_slack = max(0, int(budget_entries))
         if max_buyback_lookup_slack > 0 and buyback_prefix_tokens.size > 1:
             buyback_lookup_slacks = np.arange(int(max_buyback_lookup_slack) + 1, dtype=np.int64)
-            buyback_lookup_indices = np.searchsorted(
-                buyback_prefix_tokens,
-                buyback_lookup_slacks,
-                side="right",
-            ).astype(np.int64) - 1
-            buyback_lookup_indices = np.clip(buyback_lookup_indices, 0, int(buyback_prefix_tokens.size) - 1)
-            buyback_value_lookup = buyback_prefix_value[buyback_lookup_indices]
-            buyback_token_lookup = buyback_prefix_tokens[buyback_lookup_indices]
+            if bool(buyback_uniform_lengths):
+                buyback_lookup_indices = np.searchsorted(
+                    buyback_prefix_tokens,
+                    buyback_lookup_slacks,
+                    side="right",
+                ).astype(np.int64) - 1
+                buyback_lookup_indices = np.clip(buyback_lookup_indices, 0, int(buyback_prefix_tokens.size) - 1)
+                buyback_value_lookup = buyback_prefix_value[buyback_lookup_indices]
+                buyback_token_lookup = buyback_prefix_tokens[buyback_lookup_indices]
+            else:
+                buyback_remaining_lookup = buyback_lookup_slacks.copy()
+                buyback_value_lookup = np.zeros_like(buyback_lookup_slacks, dtype=np.float64)
+                buyback_token_lookup = np.zeros_like(buyback_lookup_slacks, dtype=np.int64)
+                for atom_len, atom_value in zip(buyback_order_len_arr.tolist(), buyback_order_value_arr.tolist()):
+                    take = int(atom_len) <= buyback_remaining_lookup
+                    if not bool(np.any(take)):
+                        continue
+                    buyback_value_lookup[take] += float(atom_value)
+                    buyback_token_lookup[take] += int(atom_len)
+                    buyback_remaining_lookup[take] -= int(atom_len)
         else:
             buyback_value_lookup = np.asarray([0.0], dtype=np.float64)
             buyback_token_lookup = np.asarray([0], dtype=np.int64)
@@ -421,7 +433,7 @@ class SurrogateAllocationMixin:
         def raw_buyback_prefix_value(slack: int) -> float:
             if int(slack) <= 0 or buyback_prefix_tokens.size <= 1:
                 return 0.0
-            if bool(buyback_uniform_lengths) and int(slack) <= int(max_buyback_lookup_slack):
+            if int(slack) <= int(max_buyback_lookup_slack):
                 return float(buyback_value_lookup[int(slack)])
             remaining = int(slack)
             value = 0.0
@@ -438,7 +450,7 @@ class SurrogateAllocationMixin:
         def raw_buyback_prefix_tokens(slack: int) -> int:
             if int(slack) <= 0 or buyback_prefix_tokens.size <= 1:
                 return 0
-            if bool(buyback_uniform_lengths) and int(slack) <= int(max_buyback_lookup_slack):
+            if int(slack) <= int(max_buyback_lookup_slack):
                 return int(buyback_token_lookup[int(slack)])
             remaining = int(slack)
             tokens = 0
