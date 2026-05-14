@@ -404,9 +404,10 @@ class SurrogateAllocationMixin:
             (np.asarray([0.0], dtype=np.float64), np.cumsum(buyback_order_value_arr, dtype=np.float64))
         )
         max_buyback_lookup_slack = max(0, int(budget_entries))
+        buyback_pair_cache: dict[int, tuple[float, int]] = {}
         if max_buyback_lookup_slack > 0 and buyback_prefix_tokens.size > 1:
-            buyback_lookup_slacks = np.arange(int(max_buyback_lookup_slack) + 1, dtype=np.int64)
             if bool(buyback_uniform_lengths):
+                buyback_lookup_slacks = np.arange(int(max_buyback_lookup_slack) + 1, dtype=np.int64)
                 buyback_lookup_indices = np.searchsorted(
                     buyback_prefix_tokens,
                     buyback_lookup_slacks,
@@ -416,53 +417,42 @@ class SurrogateAllocationMixin:
                 buyback_value_lookup = buyback_prefix_value[buyback_lookup_indices]
                 buyback_token_lookup = buyback_prefix_tokens[buyback_lookup_indices]
             else:
-                buyback_remaining_lookup = buyback_lookup_slacks.copy()
-                buyback_value_lookup = np.zeros_like(buyback_lookup_slacks, dtype=np.float64)
-                buyback_token_lookup = np.zeros_like(buyback_lookup_slacks, dtype=np.int64)
-                for atom_len, atom_value in zip(buyback_order_len_arr.tolist(), buyback_order_value_arr.tolist()):
-                    take = int(atom_len) <= buyback_remaining_lookup
-                    if not bool(np.any(take)):
-                        continue
-                    buyback_value_lookup[take] += float(atom_value)
-                    buyback_token_lookup[take] += int(atom_len)
-                    buyback_remaining_lookup[take] -= int(atom_len)
+                buyback_value_lookup = np.asarray([0.0], dtype=np.float64)
+                buyback_token_lookup = np.asarray([0], dtype=np.int64)
         else:
             buyback_value_lookup = np.asarray([0.0], dtype=np.float64)
             buyback_token_lookup = np.asarray([0], dtype=np.int64)
 
-        def raw_buyback_prefix_value(slack: int) -> float:
+        def raw_buyback_prefix_pair(slack: int) -> Tuple[float, int]:
             if int(slack) <= 0 or buyback_prefix_tokens.size <= 1:
-                return 0.0
-            if int(slack) <= int(max_buyback_lookup_slack):
-                return float(buyback_value_lookup[int(slack)])
+                return 0.0, 0
+            slack = int(slack)
+            if bool(buyback_uniform_lengths) and slack <= int(max_buyback_lookup_slack):
+                return float(buyback_value_lookup[slack]), int(buyback_token_lookup[slack])
+            cached_pair = buyback_pair_cache.get(slack)
+            if cached_pair is not None:
+                return cached_pair
             remaining = int(slack)
             value = 0.0
-            for atom_idx in buyback_order_list:
-                atom_len = int(atom_len_int_arr[atom_idx])
+            tokens = 0
+            for atom_len, atom_value in zip(buyback_order_len_arr.tolist(), buyback_order_value_arr.tolist()):
+                atom_len = int(atom_len)
                 if atom_len > remaining:
                     continue
-                value += float(raw_value_arr[atom_idx])
+                value += float(atom_value)
+                tokens += atom_len
                 remaining -= int(atom_len)
                 if remaining <= 0:
                     break
-            return float(value)
+            cached_pair = (float(value), int(tokens))
+            buyback_pair_cache[slack] = cached_pair
+            return cached_pair
+
+        def raw_buyback_prefix_value(slack: int) -> float:
+            return raw_buyback_prefix_pair(slack)[0]
 
         def raw_buyback_prefix_tokens(slack: int) -> int:
-            if int(slack) <= 0 or buyback_prefix_tokens.size <= 1:
-                return 0
-            if int(slack) <= int(max_buyback_lookup_slack):
-                return int(buyback_token_lookup[int(slack)])
-            remaining = int(slack)
-            tokens = 0
-            for atom_idx in buyback_order_list:
-                atom_len = int(atom_len_int_arr[atom_idx])
-                if atom_len > remaining:
-                    continue
-                tokens += int(atom_len)
-                remaining -= int(atom_len)
-                if remaining <= 0:
-                    break
-            return int(tokens)
+            return raw_buyback_prefix_pair(slack)[1]
 
         frontier_density_arr = raw_density_arr[actions == 2]
         kept_frontier_price = float(frontier_density_arr.min()) if frontier_density_arr.size else 0.0
