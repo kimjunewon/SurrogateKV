@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .common import *  # noqa: F401,F403
+from .tensor_utils import *  # noqa: F401,F403
 
 
 class SurrogateAllocationMixin:
@@ -1544,4 +1544,3 @@ class SurrogateAllocationMixin:
         self._last_allocator_stats = stats
 
         return materialize_actions(actions)
-

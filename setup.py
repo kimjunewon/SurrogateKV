@@ -10,7 +10,7 @@ README = ROOT / "README.md"
 
 
 setup(
-    name="surkv",
+    name="surrogatekv",
     version="0.1.0",
     description="SurrogateKV chunk-replacement KV-cache compression runtime",
     long_description=README.read_text(encoding="utf-8") if README.exists() else "",
