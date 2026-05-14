@@ -435,7 +435,7 @@ class SurKVCluster:
         for capacity in capacities:
             cluster._last_allocator_stats = {}
             cluster._last_fast_pack_plan = None
-            allocated = cluster._dynamic_ksr_dfx_allocation(
+            allocated = cluster._allocate_surrogate_frontier(
                 token_scores=record["token_scores"],
                 chunk_slices=record["chunk_slices"],
                 chunk_lengths=record["chunk_lengths"],
@@ -1228,7 +1228,7 @@ class SurKVCluster:
         for capacity in capacities:
             self._last_allocator_stats = {}
             self._last_fast_pack_plan = None
-            allocated = self._dynamic_ksr_dfx_allocation(
+            allocated = self._allocate_surrogate_frontier(
                 token_scores=token_scores,
                 chunk_slices=chunk_slices,
                 chunk_lengths=chunk_lengths,
@@ -2076,7 +2076,7 @@ class SurKVCluster:
                 # the Prune4 frontier, form residual packets, keep a small
                 # gain/density candidate market, then admit packets whose
                 # fixed-frontier after-state beats raw buyback.
-                allocated = self._dynamic_ksr_dfx_allocation(
+                allocated = self._allocate_surrogate_frontier(
                     token_scores=token_scores,
                     chunk_slices=chunk_slices,
                     chunk_lengths=chunk_lengths,
@@ -2102,7 +2102,7 @@ class SurKVCluster:
                     )
                     self._last_allocator_stats = stats
             elif self.spec.dynamic_allocator == "surkv_layer_dynamic":
-                allocated = self._dynamic_ksr_dfx_allocation(
+                allocated = self._allocate_surrogate_frontier(
                     token_scores=token_scores,
                     chunk_slices=chunk_slices,
                     chunk_lengths=chunk_lengths,
@@ -2129,7 +2129,7 @@ class SurKVCluster:
                     )
                     self._last_allocator_stats = stats
             elif self.spec.dynamic_allocator == "surrogate_kv_v2":
-                allocated = self._dynamic_ksr_dfx_allocation(
+                allocated = self._allocate_surrogate_frontier(
                     token_scores=token_scores,
                     chunk_slices=chunk_slices,
                     chunk_lengths=chunk_lengths,
@@ -2281,7 +2281,7 @@ class SurKVCluster:
                         dominance_pricing=True,
                     )
                 elif allocator in {"ks_run_dfx", "ks_run_dfx4", "ks_run_dfx_merge"}:
-                    allocated = self._dynamic_ksr_dfx_allocation(
+                    allocated = self._allocate_surrogate_frontier(
                         token_scores=token_scores,
                         chunk_slices=chunk_slices,
                         chunk_lengths=chunk_lengths,
@@ -2998,25 +2998,37 @@ class SurKVCluster:
                     anchor_counts=anchor_mask.to(dtype=local_key_bank.dtype),
                 )
 
+        chunk_proto_active_indices = None
         if self.spec.direct_strategy == "local":
             if chunk_proto_key_bank is None or chunk_proto_value_bank is None:
                 if self.spec.dynamic_regioning and self.spec.dynamic_allocator != "segment_rd":
-                    (
-                        chunk_proto_key_bank,
-                        chunk_proto_value_bank,
-                        _,
-                        _,
-                        _,
-                        _,
-                    ) = self._dynamic_micro_prototype_bank(
-                        key_states=key_states,
-                        value_states=value_states,
-                        token_scores=token_scores,
-                        chunk_slices=chunk_slices,
-                        surrogate_mode=self.spec.surrogate_mode,
-                        peak_mode=self.spec.dynamic_surrogate_variant,
-                        selected_only_mask=(replace_mask & (surrogate_lengths > 0)),
-                    )
+                    selected_surrogate_mask = replace_mask & (surrogate_lengths > 0)
+                    needs_surrogate_bank = bool(selected_surrogate_mask.any().item())
+                    if needs_surrogate_bank or self._save_layout_meta or self._save_surrogates:
+                        compact_prototype_bank = (
+                            not self._save_layout_meta
+                            and not self._save_surrogates
+                            and self.spec.dynamic_surrogate_variant
+                            not in {"light", "light_soft", "peak_light", "csb_light"}
+                        )
+                        (
+                            chunk_proto_key_bank,
+                            chunk_proto_value_bank,
+                            _,
+                            _,
+                            _,
+                            _,
+                            chunk_proto_active_indices,
+                        ) = self._dynamic_micro_prototype_bank(
+                            key_states=key_states,
+                            value_states=value_states,
+                            token_scores=token_scores,
+                            chunk_slices=chunk_slices,
+                            surrogate_mode=self.spec.surrogate_mode,
+                            peak_mode=self.spec.dynamic_surrogate_variant,
+                            selected_only_mask=selected_surrogate_mask,
+                            compact_output=compact_prototype_bank,
+                        )
                 else:
                     (
                         chunk_proto_key_bank,
@@ -3194,6 +3206,7 @@ class SurKVCluster:
                     surrogate_lengths=surrogate_lengths[batch_idx],
                     surrogate_key_bank=local_key_bank,
                     surrogate_value_bank=local_value_bank,
+                    surrogate_bank_indices=chunk_proto_active_indices,
                     mode_name="local",
                 )
             elif self.spec.null_fastpath:
@@ -3544,6 +3557,7 @@ class SurKVCluster:
         surrogate_lengths,
         surrogate_key_bank,
         surrogate_value_bank,
+        surrogate_bank_indices=None,
         mode_name: str,
         chunk_proto_weight_entropy=None,
         chunk_proto_weight_max=None,
@@ -3573,6 +3587,13 @@ class SurKVCluster:
             output_length_list = [int(v) for v in output_chunk_lengths.detach().cpu().tolist()]
             selected_chunk_indices_list = [idx for idx, selected in enumerate(selected_mask_list) if selected]
         total_tokens = int(sink_len) + int(sum(output_length_list)) + int(recent_key.shape[2])
+        bank_index_map = None
+        if surrogate_bank_indices is not None:
+            if hasattr(surrogate_bank_indices, "detach"):
+                bank_indices_list = [int(v) for v in surrogate_bank_indices.detach().cpu().tolist()]
+            else:
+                bank_indices_list = [int(v) for v in surrogate_bank_indices]
+            bank_index_map = {chunk_idx: bank_idx for bank_idx, chunk_idx in enumerate(bank_indices_list)}
 
         if (
             not self._save_layout_meta
@@ -3611,8 +3632,12 @@ class SurKVCluster:
                 ]
                 surrogate_lengths_list = [output_length_list[idx] for idx in surrogate_chunk_indices_list]
             if len(surrogate_chunk_indices_list) > 0:
+                if bank_index_map is not None:
+                    surrogate_bank_index_list = [bank_index_map[int(idx)] for idx in surrogate_chunk_indices_list]
+                else:
+                    surrogate_bank_index_list = surrogate_chunk_indices_list
                 surrogate_indices = torch.tensor(
-                    surrogate_chunk_indices_list,
+                    surrogate_bank_index_list,
                     device=key_states.device,
                     dtype=torch.long,
                 )
@@ -3695,8 +3720,21 @@ class SurKVCluster:
             for chunk_idx, (start, end) in enumerate(chunk_slices):
                 packed_len = output_length_list[chunk_idx]
                 if selected_mask_list[chunk_idx]:
-                    surrogate_key = surrogate_key_bank[batch_idx : batch_idx + 1, :, chunk_idx : chunk_idx + 1, :]
-                    surrogate_value = surrogate_value_bank[batch_idx : batch_idx + 1, :, chunk_idx : chunk_idx + 1, :]
+                    if packed_len <= 0:
+                        continue
+                    bank_chunk_idx = bank_index_map[int(chunk_idx)] if bank_index_map is not None else chunk_idx
+                    surrogate_key = surrogate_key_bank[
+                        batch_idx : batch_idx + 1,
+                        :,
+                        bank_chunk_idx : bank_chunk_idx + 1,
+                        :,
+                    ]
+                    surrogate_value = surrogate_value_bank[
+                        batch_idx : batch_idx + 1,
+                        :,
+                        bank_chunk_idx : bank_chunk_idx + 1,
+                        :,
+                    ]
                     expanded_key = surrogate_key.expand(-1, -1, packed_len, -1)
                     expanded_value = surrogate_value.expand(-1, -1, packed_len, -1)
                     append_piece(expanded_key, expanded_value)
@@ -8492,7 +8530,7 @@ class SurKVCluster:
         self._last_allocator_stats = stats
         return materialize_actions(actions)
 
-    def _dynamic_ksr_dfx_allocation(
+    def _allocate_surrogate_frontier(
         self,
         *,
         token_scores,
@@ -8511,7 +8549,7 @@ class SurKVCluster:
         reserve_coherent_price: bool = False,
         budget_complete_peel: bool = False,
     ):
-        """Raw-first K/S dominance frontier exchange.
+        """Allocate raw/surrogate/drop regions with a raw-first frontier market.
 
         This allocator deliberately does not reuse the KSRMerge/Dom pricing
         branches.  It starts from a fixed-atom raw frontier, proposes surrogate
@@ -9270,22 +9308,23 @@ class SurKVCluster:
 
                 gain_quota = max(1, int(seed_prefilter_limit) * 2 // 3)
                 density_quota = max(1, int(seed_prefilter_limit) - int(gain_quota))
-                gain_ranked_seeds = sorted(
-                    seeds,
-                    key=lambda cand: (
-                        seed_prefilter_score(cand)[0],
-                        seed_prefilter_score(cand)[2],
-                    ),
-                    reverse=True,
-                )
-                density_ranked_seeds = sorted(
-                    seeds,
-                    key=lambda cand: (
-                        seed_prefilter_score(cand)[1],
-                        seed_prefilter_score(cand)[0],
-                    ),
-                    reverse=True,
-                )
+                seed_prefilter_records = [(cand, seed_prefilter_score(cand)) for cand in seeds]
+                gain_ranked_seeds = [
+                    cand
+                    for cand, _score in sorted(
+                        seed_prefilter_records,
+                        key=lambda item: (item[1][0], item[1][2]),
+                        reverse=True,
+                    )
+                ]
+                density_ranked_seeds = [
+                    cand
+                    for cand, _score in sorted(
+                        seed_prefilter_records,
+                        key=lambda item: (item[1][1], item[1][0]),
+                        reverse=True,
+                    )
+                ]
                 kept_seeds: List[Candidate] = []
                 kept_seed_keys = set()
 
@@ -9315,13 +9354,6 @@ class SurKVCluster:
         pareto_candidates: List[Candidate] = []
         merge_accepts = 0
 
-        empty_exclude = np.zeros((num_atoms,), dtype=bool)
-        _base_fill_atoms, base_fill_value, _base_fill_tokens = raw_buyback_for_slack(
-            initial_actions,
-            int(initial_slack),
-            empty_exclude,
-            collect_atoms=False,
-        )
         base_fill_prefix_value = raw_buyback_prefix_value(int(initial_slack))
         packet_gain_cache: Dict[Tuple[Candidate, ...], float] = {}
 
@@ -9478,6 +9510,7 @@ class SurKVCluster:
                     - int(market_seed_quota),
                 )
                 candidate_records = [(cand, candidate_market_record(cand)) for cand in all_candidates]
+                candidate_record_by_cand = {cand: record for cand, record in candidate_records}
 
                 gain_ranked = sorted(
                     candidate_records,
@@ -9550,7 +9583,7 @@ class SurKVCluster:
                     keep_candidate(cand)
                 before_self_funding = int(len(kept_candidates))
                 for cand in self_funding_ranked:
-                    if candidate_market_record(cand)[4] > 0:
+                    if candidate_record_by_cand[cand][4] > 0:
                         break
                     keep_candidate(cand, min_novel_fraction=0.15)
                     if len(kept_candidates) - before_self_funding >= int(market_self_funding_quota):
@@ -9558,7 +9591,7 @@ class SurKVCluster:
                 market_self_funding_candidates = max(0, int(len(kept_candidates)) - int(before_self_funding))
                 before_seed = int(len(kept_candidates))
                 for cand in seed_ranked:
-                    if int(candidate_market_record(cand)[5]) != 1:
+                    if int(candidate_record_by_cand[cand][5]) != 1:
                         break
                     keep_candidate(cand, min_novel_fraction=0.10)
                     if len(kept_candidates) - before_seed >= int(market_seed_quota):
@@ -9606,12 +9639,7 @@ class SurKVCluster:
         no_locked_raw = np.zeros((num_atoms,), dtype=bool)
         no_buyback_exclude = np.zeros((num_atoms,), dtype=bool)
         current_slack = int(initial_slack)
-        _current_fill_atoms, current_fill_value, _current_fill_tokens = raw_buyback_for_slack(
-            initial_actions,
-            int(current_slack),
-            selected_exclude,
-            collect_atoms=False,
-        )
+        current_fill_value = raw_buyback_prefix_value(int(current_slack))
         selected_surrogates = 0
         selected_value = 0.0
         selected_gain = 0.0
@@ -26779,6 +26807,7 @@ class SurKVCluster:
         surrogate_mode: str,
         peak_mode: str = "",
         selected_only_mask=None,
+        compact_output: bool = False,
     ):
         """Build Dynamic local surrogates from fixed micro-prototypes.
 
@@ -26792,17 +26821,20 @@ class SurKVCluster:
             bsz, heads, _, head_dim = key_states.shape
             empty_bank = key_states.new_empty((bsz, heads, 0, head_dim))
             empty_score = key_states.new_empty((bsz, 0), dtype=torch.float32)
-            return empty_bank, empty_bank.clone(), None, None, empty_score, empty_score.clone()
+            return empty_bank, empty_bank.clone(), None, None, empty_score, empty_score.clone(), None
 
         span = self._contiguous_chunk_span(chunk_slices)
         if span is None:
-            return self._chunk_prototype_bank_fast(
-                key_states=key_states,
-                value_states=value_states,
-                token_scores=token_scores,
-                chunk_slices=chunk_slices,
-                surrogate_mode=surrogate_mode,
-                return_distortion=False,
+            return (
+                *self._chunk_prototype_bank_fast(
+                    key_states=key_states,
+                    value_states=value_states,
+                    token_scores=token_scores,
+                    chunk_slices=chunk_slices,
+                    surrogate_mode=surrogate_mode,
+                    return_distortion=False,
+                ),
+                None,
             )
 
         base_start, base_end = span
@@ -26811,7 +26843,7 @@ class SurKVCluster:
             bsz, heads, _, head_dim = key_states.shape
             empty_bank = key_states.new_empty((bsz, heads, 0, head_dim))
             empty_score = key_states.new_empty((bsz, 0), dtype=torch.float32)
-            return empty_bank, empty_bank.clone(), None, None, empty_score, empty_score.clone()
+            return empty_bank, empty_bank.clone(), None, None, empty_score, empty_score.clone(), None
 
         device = key_states.device
         bsz, heads, _, head_dim = key_states.shape
@@ -26826,9 +26858,13 @@ class SurKVCluster:
                 selected_any = None
             if selected_any is not None and selected_any.numel() == full_region_count:
                 if not bool(selected_any.any().item()):
+                    if compact_output:
+                        empty_key = key_states.new_empty((bsz, heads, 0, head_dim))
+                        empty_value = value_states.new_empty((bsz, heads, 0, head_dim))
+                        return empty_key, empty_value, None, None, None, None, []
                     empty_key = key_states.new_zeros((bsz, heads, full_region_count, head_dim))
                     empty_value = value_states.new_zeros((bsz, heads, full_region_count, head_dim))
-                    return empty_key, empty_value, None, None, None, None
+                    return empty_key, empty_value, None, None, None, None, None
                 if not bool(selected_any.all().item()):
                     active_region_indices = torch.nonzero(selected_any, as_tuple=False).flatten()
                     active_slice_indices = [int(idx) for idx in active_region_indices.detach().cpu().tolist()]
@@ -26919,6 +26955,16 @@ class SurKVCluster:
                         active_values.append(value_proto)
                 proto_key_bank = torch.stack(active_keys, dim=2).to(dtype=key_states.dtype)
                 proto_value_bank = torch.stack(active_values, dim=2).to(dtype=value_states.dtype)
+                if compact_output and active_slice_indices is not None:
+                    return (
+                        proto_key_bank,
+                        proto_value_bank,
+                        None,
+                        None,
+                        None,
+                        None,
+                        active_slice_indices,
+                    )
                 proto_key_bank, proto_value_bank = self._scatter_active_prototype_bank(
                     proto_key_bank=proto_key_bank,
                     proto_value_bank=proto_value_bank,
@@ -26928,6 +26974,7 @@ class SurKVCluster:
                 return (
                     proto_key_bank,
                     proto_value_bank,
+                    None,
                     None,
                     None,
                     None,
@@ -26946,13 +26993,16 @@ class SurKVCluster:
         elif all(aligned_or_tail(offset, 4) for offset in relative_boundaries):
             micro_len = 4
         else:
-            return self._chunk_prototype_bank_fast(
-                key_states=key_states,
-                value_states=value_states,
-                token_scores=token_scores,
-                chunk_slices=chunk_slices,
-                surrogate_mode=surrogate_mode,
-                return_distortion=False,
+            return (
+                *self._chunk_prototype_bank_fast(
+                    key_states=key_states,
+                    value_states=value_states,
+                    token_scores=token_scores,
+                    chunk_slices=chunk_slices,
+                    surrogate_mode=surrogate_mode,
+                    return_distortion=False,
+                ),
+                None,
             )
 
         boundary_offsets = list(range(0, span_len, micro_len))
@@ -26963,13 +27013,16 @@ class SurKVCluster:
             region_starts = [boundary_to_micro[int(start) - int(base_start)] for start, _ in region_source_slices]
             region_ends = [boundary_to_micro[int(end) - int(base_start)] for _, end in region_source_slices]
         except KeyError:
-            return self._chunk_prototype_bank_fast(
-                key_states=key_states,
-                value_states=value_states,
-                token_scores=token_scores,
-                chunk_slices=chunk_slices,
-                surrogate_mode=surrogate_mode,
-                return_distortion=False,
+            return (
+                *self._chunk_prototype_bank_fast(
+                    key_states=key_states,
+                    value_states=value_states,
+                    token_scores=token_scores,
+                    chunk_slices=chunk_slices,
+                    surrogate_mode=surrogate_mode,
+                    return_distortion=False,
+                ),
+                None,
             )
 
         regular_micro = span_len // micro_len
@@ -27203,6 +27256,19 @@ class SurKVCluster:
                 current_value_norm = proto_value_bank.to(dtype=torch.float32).norm(dim=-1).clamp_min(1e-6)
                 proto_value_bank = proto_value_bank * (target_value_norm / current_value_norm).view(bsz, heads, -1, 1)
 
+        proto_key_bank = proto_key_bank.to(dtype=key_states.dtype)
+        proto_value_bank = proto_value_bank.to(dtype=value_states.dtype)
+        if compact_output and active_slice_indices is not None:
+            return (
+                proto_key_bank,
+                proto_value_bank,
+                None,
+                None,
+                None,
+                None,
+                active_slice_indices,
+            )
+
         proto_key_bank, proto_value_bank = self._scatter_active_prototype_bank(
             proto_key_bank=proto_key_bank.to(dtype=key_states.dtype),
             proto_value_bank=proto_value_bank.to(dtype=value_states.dtype),
@@ -27212,6 +27278,7 @@ class SurKVCluster:
         return (
             proto_key_bank,
             proto_value_bank,
+            None,
             None,
             None,
             None,
