@@ -49,6 +49,52 @@ def select_low_score_chunks(
     )
 
 
+def select_chunks_ordered_fast(
+    *,
+    ordering,
+    savings_per_chunk,
+    tokens_to_save: int,
+    exclusion_radius: int,
+):
+    return _select_until_budget(
+        ordered_chunk_ids=ordering,
+        removable_tokens=savings_per_chunk,
+        target_tokens=int(tokens_to_save),
+        neighbor_radius=int(exclusion_radius),
+    )
+
+
+def select_chunks_fast(
+    *,
+    chunk_scores,
+    chunk_lengths,
+    surrogate_lengths,
+    tokens_to_save: int,
+    exclusion_radius: int,
+):
+    if tokens_to_save <= 0:
+        return torch.zeros_like(chunk_scores, dtype=torch.bool)
+    savings_per_chunk = torch.clamp(chunk_lengths.unsqueeze(0) - surrogate_lengths, min=0)
+    ordering = torch.argsort(chunk_scores, dim=-1, descending=False)
+    return select_chunks_ordered_fast(
+        ordering=ordering,
+        savings_per_chunk=savings_per_chunk,
+        tokens_to_save=int(tokens_to_save),
+        exclusion_radius=int(exclusion_radius),
+    )
+
+
+def selected_mode_codes(*, direct_strategy: str, selected_mask):
+    mode_codes = torch.zeros_like(selected_mask, dtype=torch.int8)
+    if not selected_mask.any():
+        return mode_codes
+    if direct_strategy == "null":
+        mode_codes[selected_mask] = 1
+    elif direct_strategy == "global":
+        mode_codes[selected_mask] = 2
+    return mode_codes
+
+
 def _select_until_budget(
     *,
     ordered_chunk_ids: torch.Tensor,
