@@ -393,10 +393,14 @@ class SurrogateAllocationMixin:
             [float(raw_value_arr[idx]) for idx in buyback_order_list],
             dtype=np.float64,
         )
-        buyback_order_indices = tuple(int(idx) for idx in buyback_order_list)
-        buyback_order_lengths = tuple(int(length) for length in buyback_order_len_arr.tolist())
-        buyback_order_values = tuple(float(value) for value in buyback_order_value_arr.tolist())
-        buyback_order_items = tuple(zip(buyback_order_indices, buyback_order_lengths, buyback_order_values))
+        buyback_order_items = tuple(
+            (int(idx), int(length), float(value))
+            for idx, length, value in zip(
+                buyback_order_list,
+                buyback_order_len_arr.tolist(),
+                buyback_order_value_arr.tolist(),
+            )
+        )
         buyback_uniform_lengths = bool(
             buyback_order_len_arr.size <= 1
             or np.all(buyback_order_len_arr == buyback_order_len_arr[0])
@@ -439,7 +443,7 @@ class SurrogateAllocationMixin:
             remaining = int(slack)
             value = 0.0
             tokens = 0
-            for atom_len, atom_value in zip(buyback_order_lengths, buyback_order_values):
+            for _atom_idx, atom_len, atom_value in buyback_order_items:
                 if atom_len > remaining:
                     continue
                 value += atom_value
