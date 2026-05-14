@@ -384,6 +384,7 @@ class SurrogateAllocationMixin:
         )
         buyback_order_list = [idx for idx in raw_keep_order_list if int(initial_actions[idx]) == 0]
         victim_order_list = [idx for idx in raw_drop_order_list if int(initial_actions[idx]) == 2]
+        raw_keep_order_arr = np.asarray(raw_keep_order_list, dtype=np.int64)
         buyback_order_arr = np.asarray(buyback_order_list, dtype=np.int64)
         buyback_order_len_arr = np.asarray(
             [int(atom_len_int_arr[idx]) for idx in buyback_order_list],
@@ -405,6 +406,19 @@ class SurrogateAllocationMixin:
             buyback_order_len_arr.size <= 1
             or np.all(buyback_order_len_arr == buyback_order_len_arr[0])
         )
+        buyback_single_short_pos = -1
+        buyback_single_short_len = 0
+        buyback_single_short_value = 0.0
+        if buyback_order_len_arr.size > 1 and not bool(buyback_uniform_lengths):
+            standard_buyback_len = int(buyback_order_len_arr.max())
+            short_positions = np.flatnonzero(buyback_order_len_arr != int(standard_buyback_len)).astype(np.int64)
+            if int(short_positions.size) == 1:
+                short_pos = int(short_positions[0])
+                short_len = int(buyback_order_len_arr[short_pos])
+                if 0 < int(short_len) < int(standard_buyback_len):
+                    buyback_single_short_pos = int(short_pos)
+                    buyback_single_short_len = int(short_len)
+                    buyback_single_short_value = float(buyback_order_value_arr[short_pos])
         buyback_prefix_tokens = np.concatenate(
             (np.asarray([0], dtype=np.int64), np.cumsum(buyback_order_len_arr, dtype=np.int64))
         )
@@ -430,6 +444,7 @@ class SurrogateAllocationMixin:
         else:
             buyback_value_lookup = np.asarray([0.0], dtype=np.float64)
             buyback_token_lookup = np.asarray([0], dtype=np.int64)
+        buyback_value_cache: dict[int, float] = {}
 
         def raw_buyback_prefix_pair(slack: int) -> Tuple[float, int]:
             if int(slack) <= 0 or buyback_prefix_tokens.size <= 1:
@@ -437,6 +452,19 @@ class SurrogateAllocationMixin:
             slack = int(slack)
             if bool(buyback_uniform_lengths) and slack <= int(max_buyback_lookup_slack):
                 return float(buyback_value_lookup[slack]), int(buyback_token_lookup[slack])
+            if int(buyback_single_short_pos) >= 0:
+                prefix_count = int(np.searchsorted(buyback_prefix_tokens, int(slack), side="right")) - 1
+                prefix_count = max(0, min(int(prefix_count), int(buyback_prefix_tokens.size) - 1))
+                value = float(buyback_prefix_value[prefix_count])
+                tokens = int(buyback_prefix_tokens[prefix_count])
+                remaining = int(slack) - int(tokens)
+                if (
+                    int(remaining) >= int(buyback_single_short_len)
+                    and int(buyback_single_short_pos) >= int(prefix_count)
+                ):
+                    value += float(buyback_single_short_value)
+                    tokens += int(buyback_single_short_len)
+                return float(value), int(tokens)
             cached_pair = buyback_pair_cache.get(slack)
             if cached_pair is not None:
                 return cached_pair
@@ -456,7 +484,18 @@ class SurrogateAllocationMixin:
             return cached_pair
 
         def raw_buyback_prefix_value(slack: int) -> float:
-            return raw_buyback_prefix_pair(slack)[0]
+            if int(slack) <= 0 or buyback_prefix_tokens.size <= 1:
+                return 0.0
+            slack = int(slack)
+            cached_value = buyback_value_cache.get(slack)
+            if cached_value is not None:
+                return float(cached_value)
+            if bool(buyback_uniform_lengths) and slack <= int(max_buyback_lookup_slack):
+                value = float(buyback_value_lookup[slack])
+            else:
+                value = float(raw_buyback_prefix_pair(slack)[0])
+            buyback_value_cache[slack] = float(value)
+            return float(value)
 
         def raw_buyback_prefix_tokens(slack: int) -> int:
             return raw_buyback_prefix_pair(slack)[1]
@@ -889,21 +928,14 @@ class SurrogateAllocationMixin:
                 int(math.ceil(float(len(seeds)) * max(0.0, min(1.0, float(seed_frontier_pressure))))),
             )
             if int(len(seeds)) > int(seed_prefilter_limit):
-                seed_prefilter_score_cache: Dict[Candidate, Tuple[float, float, int]] = {}
-
                 def seed_prefilter_score(cand: Candidate) -> Tuple[float, float, int]:
-                    cached = seed_prefilter_score_cache.get(cand)
-                    if cached is not None:
-                        return cached
                     start_idx = int(cand[0])
                     end_idx = int(cand[1])
                     token_len = int(prefix_len[end_idx] - prefix_len[start_idx])
                     value = float(interval_projection_value(start_idx, end_idx))
                     gain = float(value) - float(region_open_cost) - float(raw_slot_price)
                     density = float(gain) / max(1.0, float(token_len))
-                    score = (float(gain), float(density), int(token_len))
-                    seed_prefilter_score_cache[cand] = score
-                    return score
+                    return float(gain), float(density), int(token_len)
 
                 gain_quota = max(1, int(seed_prefilter_limit) * 2 // 3)
                 density_quota = max(1, int(seed_prefilter_limit) - int(gain_quota))
@@ -950,47 +982,11 @@ class SurrogateAllocationMixin:
                 )
 
         stack: List[Candidate] = []
+        stack_records: List[Optional[Tuple[float, int, float, float, int, int, float, float]]] = []
         pareto_candidates: List[Candidate] = []
         merge_accepts = 0
 
         base_fill_prefix_value = raw_buyback_prefix_value(int(initial_slack))
-        packet_gain_cache: Dict[Tuple[Candidate, ...], float] = {}
-
-        def packet_gain_from_records(records: Sequence[Tuple[float, int, float, float, int, int, float, float]]) -> float:
-            total_delta = 0
-            total_value = 0.0
-            total_sold_loss = 0.0
-            for record in records:
-                _gain, budget_delta, value, sold_loss, _sold_tokens, _token_len, coherent_credit, raw_reserve_debt = record
-                total_delta += int(budget_delta)
-                total_value += float(value)
-                total_sold_loss += float(sold_loss)
-            after_slack = int(initial_slack) - int(total_delta)
-            if after_slack < 0:
-                return -float("inf")
-            return (
-                float(total_value)
-                - float(total_sold_loss)
-                - float(region_open_cost) * float(len(records))
-                + raw_buyback_prefix_value(int(after_slack))
-                - float(base_fill_prefix_value)
-            )
-
-        def packet_initial_gain(cands: Sequence[Candidate]) -> float:
-            cache_key = tuple(cands)
-            cached = packet_gain_cache.get(cache_key)
-            if cached is not None:
-                return float(cached)
-            records = []
-            for cand in cands:
-                record = initial_record(cand)
-                if record is None:
-                    packet_gain_cache[cache_key] = -float("inf")
-                    return -float("inf")
-                records.append(record)
-            gain = packet_gain_from_records(records)
-            packet_gain_cache[cache_key] = float(gain)
-            return float(gain)
 
         def initial_gain(cand: Candidate) -> float:
             record = initial_record(cand)
@@ -1000,21 +996,34 @@ class SurrogateAllocationMixin:
 
         for seed in seeds:
             stack.append(seed)
+            stack_records.append(initial_record(seed))
             while len(stack) >= 2:
                 left = stack[-2]
                 right = stack[-1]
                 if int(left[1]) > int(right[0]):
                     break
                 merged: Candidate = (int(left[0]), int(right[1]), int(left[2]), int(right[3]), int(left[4]) + int(right[4]))
-                left_record = initial_record(left)
-                right_record = initial_record(right)
+                left_record = stack_records[-2]
+                right_record = stack_records[-1]
                 merged_record = initial_record(merged)
                 if left_record is None or right_record is None:
                     split_gain = -float("inf")
                     split_delta = 1
                 else:
-                    split_gain = float(packet_gain_from_records((left_record, right_record)))
                     split_delta = int(left_record[1]) + int(right_record[1])
+                    split_after_slack = int(initial_slack) - int(split_delta)
+                    if split_after_slack < 0:
+                        split_gain = -float("inf")
+                    else:
+                        split_gain = (
+                            float(left_record[2])
+                            + float(right_record[2])
+                            - float(left_record[3])
+                            - float(right_record[3])
+                            - float(region_open_cost) * 2.0
+                            + raw_buyback_prefix_value(int(split_after_slack))
+                            - float(base_fill_prefix_value)
+                        )
                 if merged_record is None:
                     merged_gain = -float("inf")
                     merged_delta = 1
@@ -1029,7 +1038,10 @@ class SurrogateAllocationMixin:
                 if bool(prefer_merged) or float(merged_gain) > float(split_gain):
                     stack.pop()
                     stack.pop()
+                    stack_records.pop()
+                    stack_records.pop()
                     stack.append(merged)
+                    stack_records.append(merged_record)
                     merge_accepts += 1
                     continue
                 if float(merged_gain) > 0.0 and int(merged_delta) < int(split_delta):
@@ -1057,39 +1069,28 @@ class SurrogateAllocationMixin:
         market_self_funding_candidates = 0
         market_seed_candidates = 0
 
-        def candidate_token_len(cand: Candidate) -> int:
-            return int(prefix_len[int(cand[1])] - prefix_len[int(cand[0])])
-
-        candidate_market_record_cache: Dict[Candidate, Tuple[float, int, float, float, int, int, float, float]] = {}
-
         def candidate_market_record(cand: Candidate) -> Tuple[float, int, float, float, int, int, float, float]:
-            cached = candidate_market_record_cache.get(cand)
-            if cached is not None:
-                return cached
             record = initial_record(cand)
             if record is None:
-                record = (-float("inf"), 0, -float("inf"), -float("inf"), 1, int(cand[4]), 0.0, -float("inf"))
-            else:
-                gain, budget_delta, value, _sold_loss, _sold_tokens, token_len, coherent_credit, _raw_reserve_debt = record
-                token_len = max(1, int(token_len))
-                density = float(gain) / float(token_len)
-                # Keep broad coherent packets visible to the bounded market.
-                # Admission still uses the raw-frontier after-state gain, so
-                # this only chooses which candidates get a chance to compete.
-                effective_coverage_value = float(value) + (float(coherent_credit) if bool(reserve_coherent_price) else 0.0)
-                coverage = float(effective_coverage_value) * math.log1p(float(token_len))
-                record = (
-                    float(gain),
-                    int(token_len),
-                    float(density),
-                    float(coverage),
-                    int(budget_delta),
-                    int(cand[4]),
-                    float(value),
-                    float(coverage),
-                )
-            candidate_market_record_cache[cand] = record
-            return record
+                return -float("inf"), 0, -float("inf"), -float("inf"), 1, int(cand[4]), 0.0, -float("inf")
+            gain, budget_delta, value, _sold_loss, _sold_tokens, token_len, coherent_credit, _raw_reserve_debt = record
+            token_len = max(1, int(token_len))
+            density = float(gain) / float(token_len)
+            # Keep broad coherent packets visible to the bounded market.
+            # Admission still uses the raw-frontier after-state gain, so
+            # this only chooses which candidates get a chance to compete.
+            effective_coverage_value = float(value) + (float(coherent_credit) if bool(reserve_coherent_price) else 0.0)
+            coverage = float(effective_coverage_value) * math.log1p(float(token_len))
+            return (
+                float(gain),
+                int(token_len),
+                float(density),
+                float(coverage),
+                int(budget_delta),
+                int(cand[4]),
+                float(value),
+                float(coverage),
+            )
 
         if bool(bounded_market):
             # Keep the market sublinear, but not so narrow that high-prune
@@ -1388,24 +1389,50 @@ class SurrogateAllocationMixin:
             current_cost += int(budget_delta)
 
         def fill_raw_frontier(actions_ref: np.ndarray, cost: int) -> Tuple[int, int, float, int]:
-            fill_atoms = 0
+            current = int(cost)
+            remaining = int(budget_entries) - int(current)
+            if remaining <= 0:
+                return 0, 0, 0.0, int(current)
+            fill_order_arr = raw_keep_order_arr if bool(budget_complete_peel) else buyback_order_arr
+            if fill_order_arr.size <= 0:
+                return 0, 0, 0.0, int(current)
+            eligible_atoms = fill_order_arr[actions_ref[fill_order_arr] == 0]
+            if eligible_atoms.size <= 0:
+                return 0, 0, 0.0, int(current)
+
+            chosen_atoms: List[int] = []
+            chosen_tokens = 0
+            eligible_lens = atom_len_int_arr[eligible_atoms]
+            cumulative_lens = np.cumsum(eligible_lens, dtype=np.int64)
+            prefix_count = int(np.searchsorted(cumulative_lens, int(remaining), side="right"))
+            if prefix_count > 0:
+                chosen_atoms.extend(int(v) for v in eligible_atoms[:prefix_count].tolist())
+                chosen_tokens = int(cumulative_lens[int(prefix_count) - 1])
+            remaining -= int(chosen_tokens)
+            if remaining > 0 and prefix_count < int(eligible_atoms.size):
+                for atom_idx, atom_len in zip(
+                    eligible_atoms[int(prefix_count) :].tolist(),
+                    eligible_lens[int(prefix_count) :].tolist(),
+                ):
+                    atom_len = int(atom_len)
+                    if atom_len > remaining:
+                        continue
+                    chosen_atoms.append(int(atom_idx))
+                    chosen_tokens += int(atom_len)
+                    remaining -= int(atom_len)
+                    if remaining <= 0:
+                        break
+            if not chosen_atoms:
+                return 0, 0, 0.0, int(current)
+
+            actions_ref[np.asarray(chosen_atoms, dtype=np.int64)] = 2
+            fill_atoms = int(len(chosen_atoms))
             fill_tokens = 0
             fill_value = 0.0
-            current = int(cost)
-            fill_order = raw_keep_order_list if bool(budget_complete_peel) else buyback_order_list
-            for atom_idx in fill_order:
-                if int(actions_ref[atom_idx]) != 0:
-                    continue
-                atom_len = int(atom_len_int_arr[atom_idx])
-                if current + int(atom_len) > int(budget_entries):
-                    continue
-                actions_ref[atom_idx] = 2
-                current += int(atom_len)
-                fill_atoms += 1
-                fill_tokens += int(atom_len)
-                fill_value += float(raw_value_arr[atom_idx])
-                if current >= int(budget_entries):
-                    break
+            for atom_idx in chosen_atoms:
+                fill_tokens += int(atom_len_int_arr[int(atom_idx)])
+                fill_value += float(raw_value_arr[int(atom_idx)])
+            current += int(fill_tokens)
             return int(fill_atoms), int(fill_tokens), float(fill_value), int(current)
 
         def peel_surrogate_frontier(actions_ref: np.ndarray, cost: int) -> Tuple[int, int, float, int, int]:
