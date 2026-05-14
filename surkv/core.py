@@ -5,8 +5,7 @@ import time
 import numpy as np
 import torch
 
-from .methods.base import MethodSpec
-from .methods.registry import MODE_TO_SPEC
+from .methods.registry import MODE_TO_SPEC, MethodSpec
 from .methods.surrogate_kv.allocation import SurrogateAllocationMixin
 from .methods.surrogate_kv.packing import SurrogatePackingMixin
 from .methods.surrogate_kv.prototypes import SurrogatePrototypeMixin
