@@ -393,6 +393,10 @@ class SurrogateAllocationMixin:
             [float(raw_value_arr[idx]) for idx in buyback_order_list],
             dtype=np.float64,
         )
+        buyback_order_indices = tuple(int(idx) for idx in buyback_order_list)
+        buyback_order_lengths = tuple(int(length) for length in buyback_order_len_arr.tolist())
+        buyback_order_values = tuple(float(value) for value in buyback_order_value_arr.tolist())
+        buyback_order_items = tuple(zip(buyback_order_indices, buyback_order_lengths, buyback_order_values))
         buyback_uniform_lengths = bool(
             buyback_order_len_arr.size <= 1
             or np.all(buyback_order_len_arr == buyback_order_len_arr[0])
@@ -435,11 +439,10 @@ class SurrogateAllocationMixin:
             remaining = int(slack)
             value = 0.0
             tokens = 0
-            for atom_len, atom_value in zip(buyback_order_len_arr.tolist(), buyback_order_value_arr.tolist()):
-                atom_len = int(atom_len)
+            for atom_len, atom_value in zip(buyback_order_lengths, buyback_order_values):
                 if atom_len > remaining:
                     continue
-                value += float(atom_value)
+                value += atom_value
                 tokens += atom_len
                 remaining -= int(atom_len)
                 if remaining <= 0:
@@ -513,7 +516,10 @@ class SurrogateAllocationMixin:
             return raw_local + int(start_idx)
 
         def initial_candidate_metrics(cand: Candidate):
-            start_idx, end_idx, left_anchor, right_anchor, _seed_count = cand
+            start_idx = int(cand[0])
+            end_idx = int(cand[1])
+            left_anchor = int(cand[2])
+            right_anchor = int(cand[3])
             if (
                 start_idx < 0
                 or end_idx > num_atoms
@@ -603,7 +609,10 @@ class SurrogateAllocationMixin:
                     return None
                 value, sold_loss, sold_tokens, token_len, _coherent_credit, _raw_reserve_debt = metrics
                 return value, sold_loss, sold_tokens, np.empty((0,), dtype=np.int64), token_len
-            start_idx, end_idx, left_anchor, right_anchor, _seed_count = [int(v) for v in cand]
+            start_idx = int(cand[0])
+            end_idx = int(cand[1])
+            left_anchor = int(cand[2])
+            right_anchor = int(cand[3])
             if (
                 start_idx < 0
                 or end_idx > num_atoms
@@ -686,25 +695,45 @@ class SurrogateAllocationMixin:
                     value = float(eligible_values[:keep_count].sum())
                     tokens = int(token_prefix[int(keep_count) - 1])
                     return np.empty((0,), dtype=np.int64), float(value), int(tokens)
+                eligible = ~exclude[buyback_order_arr]
+                if blocked_start >= 0:
+                    eligible &= (buyback_order_arr < int(blocked_start)) | (buyback_order_arr >= int(blocked_end))
+                if not bool(np.any(eligible)):
+                    return np.empty((0,), dtype=np.int64), 0.0, 0
+                remaining = int(slack)
+                value = 0.0
+                tokens = 0
+                for atom_len, atom_value in zip(
+                    buyback_order_len_arr[eligible].tolist(),
+                    buyback_order_value_arr[eligible].tolist(),
+                ):
+                    atom_len = int(atom_len)
+                    if atom_len > remaining:
+                        continue
+                    value += float(atom_value)
+                    tokens += atom_len
+                    remaining -= atom_len
+                    if remaining <= 0:
+                        break
+                return np.empty((0,), dtype=np.int64), float(value), int(tokens)
             remaining = int(slack)
             atoms: List[int] = []
             value = 0.0
             tokens = 0
             blocked_start = -1 if span_start is None else int(span_start)
             blocked_end = -1 if span_end is None else int(span_end)
-            for atom_idx in buyback_order_list:
+            for atom_idx, atom_len, atom_value in buyback_order_items:
                 if (
                     bool(exclude[atom_idx])
                     or (blocked_start >= 0 and blocked_start <= int(atom_idx) < blocked_end)
                     or int(actions_ref[atom_idx]) != 0
                 ):
                     continue
-                atom_len = int(atom_len_int_arr[atom_idx])
                 if atom_len > remaining:
                     continue
                 if bool(collect_atoms):
                     atoms.append(atom_idx)
-                value += float(raw_value_arr[atom_idx])
+                value += atom_value
                 tokens += int(atom_len)
                 remaining -= int(atom_len)
                 if remaining <= 0:
@@ -747,7 +776,10 @@ class SurrogateAllocationMixin:
             if metrics is None:
                 return None
             value, sold_loss, sold_tokens, raw_inside, token_len = metrics
-            start_idx, end_idx, left_anchor, right_anchor, _seed_count = [int(v) for v in cand]
+            start_idx = int(cand[0])
+            end_idx = int(cand[1])
+            left_anchor = int(cand[2])
+            right_anchor = int(cand[3])
             if raw_inside.size and bool(np.any(locked_raw[raw_inside])):
                 return None
             slack = int(budget_entries) - int(used_entries)
@@ -787,12 +819,12 @@ class SurrogateAllocationMixin:
             }
 
         initial_record_cache: Dict[Candidate, Optional[Tuple[float, int, float, float, int, int, float, float]]] = {}
+        missing_record = object()
 
         def initial_record(cand: Candidate):
-            try:
-                return initial_record_cache[cand]
-            except KeyError:
-                pass
+            cached = initial_record_cache.get(cand, missing_record)
+            if cached is not missing_record:
+                return cached
             metrics = initial_candidate_metrics(cand)
             if metrics is None:
                 initial_record_cache[cand] = None
@@ -859,7 +891,8 @@ class SurrogateAllocationMixin:
                     cached = seed_prefilter_score_cache.get(cand)
                     if cached is not None:
                         return cached
-                    start_idx, end_idx, _left_anchor, _right_anchor, _seed_count = [int(v) for v in cand]
+                    start_idx = int(cand[0])
+                    end_idx = int(cand[1])
                     token_len = int(prefix_len[end_idx] - prefix_len[start_idx])
                     value = float(interval_projection_value(start_idx, end_idx))
                     gain = float(value) - float(region_open_cost) - float(raw_slot_price)
@@ -1222,7 +1255,10 @@ class SurrogateAllocationMixin:
         rejected_sold_k = 0
 
         for _neg_gain, _idx, cand in candidate_queue:
-            start_idx, end_idx, left_anchor, right_anchor, _seed_count = [int(v) for v in cand]
+            start_idx = int(cand[0])
+            end_idx = int(cand[1])
+            left_anchor = int(cand[2])
+            right_anchor = int(cand[3])
             if (
                 int(left_anchor) < 0
                 or int(right_anchor) >= num_atoms
