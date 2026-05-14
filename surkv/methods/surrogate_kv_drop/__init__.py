@@ -6,9 +6,8 @@ from ..base import MethodSpec
 SPEC = MethodSpec(
     name="SurrogateKV-Drop",
     mode="surrogate_kv_drop",
-    protected_sink=False,
+    kind="drop",
     null_fastpath=True,
-    direct_strategy="null",
     dynamic_allocator="surrogate_drop",
     dynamic_anchor_width=4,
 )

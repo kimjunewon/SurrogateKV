@@ -3,96 +3,24 @@ from __future__ import annotations
 import torch
 
 
-_NEIGHBOR_MASK_CACHE = {}
-
-
-def _device_key(device: torch.device) -> str:
-    index = "" if device.index is None else str(device.index)
-    return f"{device.type}:{index}"
-
-
-def _cached_neighbor_mask(*, chunk_count: int, radius: int, device: torch.device):
-    if radius <= 0 or chunk_count <= 0:
-        return None
-
-    cache_key = (_device_key(device), int(chunk_count), int(radius))
-    cached = _NEIGHBOR_MASK_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
-    indices = torch.arange(chunk_count, device=device, dtype=torch.long)
-    mask = (indices[:, None] - indices[None, :]).abs() <= int(radius)
-    if len(_NEIGHBOR_MASK_CACHE) >= 64:
-        _NEIGHBOR_MASK_CACHE.clear()
-    _NEIGHBOR_MASK_CACHE[cache_key] = mask
-    return mask
-
-
-def select_low_score_chunks(
-    *,
-    chunk_scores: torch.Tensor,
-    chunk_lengths: torch.Tensor,
-    surrogate_lengths: torch.Tensor,
-    tokens_to_save: int,
-    neighbor_radius: int = 0,
-) -> torch.Tensor:
-    if tokens_to_save <= 0:
-        return torch.zeros_like(chunk_scores, dtype=torch.bool)
-
-    removable_tokens = torch.clamp(chunk_lengths.unsqueeze(0) - surrogate_lengths, min=0)
-    lowest_score_first = torch.argsort(chunk_scores, dim=-1, descending=False)
-    return _select_until_budget(
-        ordered_chunk_ids=lowest_score_first,
-        removable_tokens=removable_tokens,
-        target_tokens=int(tokens_to_save),
-        neighbor_radius=int(neighbor_radius),
-    )
-
-
-def select_chunks_ordered_fast(
-    *,
-    ordering,
-    savings_per_chunk,
-    tokens_to_save: int,
-    exclusion_radius: int,
-):
-    return _select_until_budget(
-        ordered_chunk_ids=ordering,
-        removable_tokens=savings_per_chunk,
-        target_tokens=int(tokens_to_save),
-        neighbor_radius=int(exclusion_radius),
-    )
-
-
 def select_chunks_fast(
     *,
     chunk_scores,
     chunk_lengths,
     surrogate_lengths,
     tokens_to_save: int,
-    exclusion_radius: int,
+    exclusion_radius: int = 0,
 ):
     if tokens_to_save <= 0:
         return torch.zeros_like(chunk_scores, dtype=torch.bool)
     savings_per_chunk = torch.clamp(chunk_lengths.unsqueeze(0) - surrogate_lengths, min=0)
     ordering = torch.argsort(chunk_scores, dim=-1, descending=False)
-    return select_chunks_ordered_fast(
-        ordering=ordering,
-        savings_per_chunk=savings_per_chunk,
-        tokens_to_save=int(tokens_to_save),
-        exclusion_radius=int(exclusion_radius),
+    return _select_until_budget(
+        ordered_chunk_ids=ordering,
+        removable_tokens=savings_per_chunk,
+        target_tokens=int(tokens_to_save),
+        neighbor_radius=int(exclusion_radius),
     )
-
-
-def selected_mode_codes(*, direct_strategy: str, selected_mask):
-    mode_codes = torch.zeros_like(selected_mask, dtype=torch.int8)
-    if not selected_mask.any():
-        return mode_codes
-    if direct_strategy == "null":
-        mode_codes[selected_mask] = 1
-    elif direct_strategy == "global":
-        mode_codes[selected_mask] = 2
-    return mode_codes
 
 
 def _select_until_budget(
@@ -123,34 +51,19 @@ def _select_until_budget(
         selected.scatter_(1, ordered_chunk_ids, ordered_selected)
         return selected
 
+    # Kept only for API completeness; current SurrogateKV methods call this with radius 0.
     saved_tokens = removable_tokens.new_zeros((batch_size,))
     blocked = torch.zeros_like(selected)
-    deferred = torch.zeros_like(selected)
     batch_ids = torch.arange(batch_size, device=ordered_chunk_ids.device, dtype=torch.long)
-    neighbor_mask = _cached_neighbor_mask(
-        chunk_count=chunk_count,
-        radius=neighbor_radius,
-        device=ordered_chunk_ids.device,
-    )
-
+    indices = torch.arange(chunk_count, device=ordered_chunk_ids.device, dtype=torch.long)
+    neighbor_mask = (indices[:, None] - indices[None, :]).abs() <= int(neighbor_radius)
     for rank in range(chunk_count):
         chunk_ids = ordered_chunk_ids[:, rank]
         savings = ordered_savings[:, rank]
-        can_help = savings > 0
-        needs_more = saved_tokens < target_tokens
-        blocked_now = blocked[batch_ids, chunk_ids]
-        choose_now = can_help & needs_more & ~blocked_now
-
-        selected[batch_ids, chunk_ids] |= choose_now
-        saved_tokens = saved_tokens + savings * choose_now.to(dtype=savings.dtype)
-        deferred[:, rank] = can_help & needs_more & blocked_now
-        blocked |= neighbor_mask.index_select(0, chunk_ids) & choose_now.unsqueeze(1)
-
-    for rank in range(chunk_count):
-        chunk_ids = ordered_chunk_ids[:, rank]
-        savings = ordered_savings[:, rank]
-        choose_now = deferred[:, rank] & ~selected[batch_ids, chunk_ids] & (saved_tokens < target_tokens)
-        selected[batch_ids, chunk_ids] |= choose_now
-        saved_tokens = saved_tokens + savings * choose_now.to(dtype=savings.dtype)
-
+        can_select = (savings > 0) & (saved_tokens < target_tokens) & ~blocked[batch_ids, chunk_ids]
+        if not can_select.any():
+            continue
+        selected[batch_ids[can_select], chunk_ids[can_select]] = True
+        saved_tokens = saved_tokens + torch.where(can_select, savings, torch.zeros_like(savings))
+        blocked[can_select] |= neighbor_mask.index_select(0, chunk_ids[can_select])
     return selected

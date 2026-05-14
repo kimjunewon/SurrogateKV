@@ -12,8 +12,8 @@ from surkv import SurKVCluster, SURKV_METHOD_TO_MODE
 
 - `surkv/`: core runtime package and method implementations
 - `surkv/core.py`: shared tensor packing and cache update logic
-- `surkv/methods/`: active methods, currently `SurrogateKV`,
-  `SurrogateKV-Drop`, `SurKVNull`, `SurKVGlobal`, and `SurKVLocal`
+- `surkv/methods/`: the two publish-facing methods, `SurrogateKV` and
+  `SurrogateKV-Drop`
 - `run/longbench/`: LongBench prediction, evaluation, and example launch
   scripts, matching the shape of external reference repos such as DynamicKV
 - `data/`: empty dataset slots, kept only as public-repo placeholders
@@ -84,5 +84,5 @@ repo remains publishable as the method implementation itself.
   entrypoints, and empty data slots here.
 - Do not commit model weights, datasets, experiment logs, summaries, plots, or
   workspace-only helper tools.
-- New SurKV variants should live under `surkv/methods/<method_name>/` and be
-  registered in `surkv/methods/registry.py`.
+- New SurKV variants should add a small method spec under `surkv/methods/` and
+  keep implementation code inside the semantic module it actually belongs to.
