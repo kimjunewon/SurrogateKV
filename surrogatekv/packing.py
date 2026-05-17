@@ -360,6 +360,9 @@ class SurrogatePackingMixin:
         if timing_breakdown:
             for name in ("score", "planning", "prototype", "packing"):
                 stats[f"timing_{name}_seconds"] = float(timing_breakdown.get(name, 0.0) or 0.0)
+        sink_allocator_stats = getattr(self, "_last_sink_allocator_stats", None)
+        if sink_allocator_stats:
+            stats.update(sink_allocator_stats)
         allocator_stats = getattr(self, "_last_allocator_stats", None)
         if allocator_stats:
             stats.update(allocator_stats)

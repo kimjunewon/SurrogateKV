@@ -4,6 +4,584 @@ from .tensor_utils import *  # noqa: F401,F403
 
 
 class SurrogateAllocationMixin:
+    def _rank_salience(self, token_scores):
+        scores = token_scores.detach().to(dtype=torch.float32).clamp_min(0.0)
+        if scores.ndim != 2 or scores.shape[-1] <= 0:
+            return scores
+        num_tokens = int(scores.shape[-1])
+        tail_floor = 1.0 / float(max(2, num_tokens + 1))
+        return -torch.log(torch.clamp(1.0 - _rank01(scores), min=tail_floor))
+
+    def _surrogate_region_value(self, salience):
+        if salience.shape[-1] <= 0:
+            return salience.new_zeros((salience.shape[0],))
+        token_len = float(salience.shape[-1])
+        mass = salience.sum(dim=-1)
+        energy = salience.square().sum(dim=-1)
+        projected = 2.0 * mass.square() / max(1.0, token_len) - energy
+        return projected.clamp_min(0.0).minimum(energy)
+
+    def _allocation_plan_value(
+        self,
+        *,
+        token_scores,
+        sink_len: int,
+        chunk_slices,
+        replace_mask,
+        surrogate_lengths,
+    ) -> float:
+        salience = self._rank_salience(token_scores)
+        if salience.ndim != 2 or salience.shape[-1] <= 0:
+            return 0.0
+        raw_value = salience.square()
+        batch_values = raw_value.new_zeros((salience.shape[0],))
+        sink_len = max(0, min(int(sink_len), int(salience.shape[-1])))
+        if sink_len > 0:
+            batch_values += raw_value[:, :sink_len].sum(dim=-1)
+        for chunk_idx, (start, end) in enumerate(chunk_slices):
+            start = int(start)
+            end = int(end)
+            if end <= start:
+                continue
+            chunk_raw_value = raw_value[:, start:end].sum(dim=-1)
+            chunk_surrogate_value = self._surrogate_region_value(salience[:, start:end])
+            selected = replace_mask[:, int(chunk_idx)].to(dtype=torch.bool)
+            has_surrogate = surrogate_lengths[:, int(chunk_idx)].to(dtype=torch.long) > 0
+            represented_value = torch.where(
+                has_surrogate,
+                chunk_surrogate_value,
+                raw_value.new_zeros((raw_value.shape[0],)),
+            )
+            batch_values += torch.where(selected, represented_value, chunk_raw_value)
+        return float(batch_values.mean().item()) if batch_values.numel() else 0.0
+
+    def _plan_frontier_allocation(
+        self,
+        *,
+        token_scores,
+        past_len: int,
+        recent_len: int,
+        effective_capacity_prompt: int,
+        sink_len: int,
+    ):
+        sink_len = max(0, min(int(sink_len), int(past_len)))
+        budget_past_total = max(1, int(effective_capacity_prompt) - int(recent_len))
+        if sink_len > budget_past_total:
+            return None
+
+        compressible_start = int(sink_len)
+        compressible_len = int(past_len) - int(compressible_start)
+        if compressible_len <= 0:
+            return None
+        budget_compressible = max(0, int(budget_past_total) - int(sink_len))
+        tokens_to_save = max(0, int(compressible_len) - int(budget_compressible))
+        adaptive_chunk_size = self._adaptive_chunk_size(
+            compressible_len=compressible_len,
+            budget_compressible=budget_compressible,
+            tokens_to_save=tokens_to_save,
+        )
+        regular_chunk_slices = [
+            (compressible_start + start, compressible_start + end)
+            for start, end in self._chunk_slices(compressible_len, adaptive_chunk_size)
+        ]
+        if budget_compressible >= compressible_len:
+            chunk_slices = regular_chunk_slices
+            chunk_lengths = torch.tensor(
+                [end - start for start, end in chunk_slices],
+                device=token_scores.device,
+                dtype=torch.long,
+            )
+            replace_mask = torch.zeros(
+                (token_scores.shape[0], len(chunk_slices)),
+                device=token_scores.device,
+                dtype=torch.bool,
+            )
+            surrogate_lengths = torch.ones(
+                (token_scores.shape[0], len(chunk_slices)),
+                device=token_scores.device,
+                dtype=torch.long,
+            )
+            return {
+                "sink_len": sink_len,
+                "compressible_start": compressible_start,
+                "compressible_len": compressible_len,
+                "budget_past_total": budget_past_total,
+                "budget_compressible": budget_compressible,
+                "tokens_to_save": tokens_to_save,
+                "adaptive_chunk_size": adaptive_chunk_size,
+                "regular_chunk_slices": regular_chunk_slices,
+                "chunk_slices": chunk_slices,
+                "chunk_lengths": chunk_lengths,
+                "replace_mask": replace_mask,
+                "surrogate_lengths": surrogate_lengths,
+                "chunk_mean_scores": token_scores.new_zeros((token_scores.shape[0], len(chunk_slices))),
+                "chunk_max_scores": token_scores.new_zeros((token_scores.shape[0], len(chunk_slices))),
+                "allocator_stats": {},
+                "fast_pack_plan": None,
+                "plan_value": self._allocation_plan_value(
+                    token_scores=token_scores,
+                    sink_len=sink_len,
+                    chunk_slices=chunk_slices,
+                    replace_mask=replace_mask,
+                    surrogate_lengths=surrogate_lengths,
+                ),
+            }
+
+        chunk_slices = [(compressible_start, int(past_len))]
+        chunk_lengths = torch.tensor(
+            [end - start for start, end in chunk_slices],
+            device=token_scores.device,
+            dtype=torch.long,
+        )
+        allocated = self._allocate_surrogate_frontier(
+            token_scores=token_scores,
+            chunk_slices=chunk_slices,
+            chunk_lengths=chunk_lengths,
+            target_compressed_tokens=effective_capacity_prompt,
+            sink_len=sink_len,
+            recent_len=recent_len,
+            merge_first=False,
+            current_frontier_accept=False,
+            admission_shadow_price=True,
+            frontier_region_price=True,
+            completion_order=False,
+            bounded_market=True,
+            budget_complete_peel=True,
+        )
+        allocator_stats = dict(self._last_allocator_stats or {})
+        fast_pack_plan = self._last_fast_pack_plan
+        if allocated is None:
+            chunk_slices = regular_chunk_slices
+            chunk_lengths = torch.tensor(
+                [end - start for start, end in chunk_slices],
+                device=token_scores.device,
+                dtype=torch.long,
+            )
+            surrogate_lengths = torch.ones(
+                (token_scores.shape[0], len(chunk_slices)),
+                device=token_scores.device,
+                dtype=torch.long,
+            )
+            chunk_mean_scores, chunk_max_scores = self._chunk_statistics_fast_mean_max(
+                token_scores=token_scores,
+                chunk_slices=chunk_slices,
+            )
+            replace_mask = self._select_low_importance_chunks(
+                chunk_scores=chunk_mean_scores,
+                chunk_max_scores=chunk_max_scores,
+                chunk_lengths=chunk_lengths,
+                surrogate_lengths=surrogate_lengths,
+                tokens_to_save=tokens_to_save,
+            )
+            allocator_stats = {"surrogate_kv_allocator_fallback": 1}
+            fast_pack_plan = None
+        else:
+            chunk_slices, chunk_lengths, replace_mask, surrogate_lengths = allocated
+            chunk_mean_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
+            chunk_max_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
+
+        return {
+            "sink_len": sink_len,
+            "compressible_start": compressible_start,
+            "compressible_len": compressible_len,
+            "budget_past_total": budget_past_total,
+            "budget_compressible": budget_compressible,
+            "tokens_to_save": tokens_to_save,
+            "adaptive_chunk_size": adaptive_chunk_size,
+            "regular_chunk_slices": regular_chunk_slices,
+            "chunk_slices": chunk_slices,
+            "chunk_lengths": chunk_lengths,
+            "replace_mask": replace_mask,
+            "surrogate_lengths": surrogate_lengths,
+            "chunk_mean_scores": chunk_mean_scores,
+            "chunk_max_scores": chunk_max_scores,
+            "allocator_stats": allocator_stats,
+            "fast_pack_plan": fast_pack_plan,
+            "plan_value": self._allocation_plan_value(
+                token_scores=token_scores,
+                sink_len=sink_len,
+                chunk_slices=chunk_slices,
+                replace_mask=replace_mask,
+                surrogate_lengths=surrogate_lengths,
+            ),
+        }
+
+    def _reserve_prefix_as_sink(self, *, plan, prefix_tokens: int, past_len: int):
+        prefix_tokens = max(0, min(int(prefix_tokens), int(past_len)))
+        if prefix_tokens <= 0:
+            return plan
+
+        new_slices = []
+        new_selected = []
+        new_surrogate_lengths = []
+        replace_mask = plan["replace_mask"]
+        surrogate_lengths = plan["surrogate_lengths"]
+
+        for chunk_idx, (start, end) in enumerate(plan["chunk_slices"]):
+            start = int(start)
+            end = int(end)
+            if end <= prefix_tokens:
+                continue
+            new_start = max(start, prefix_tokens)
+            if end <= new_start:
+                continue
+            new_slices.append((new_start, end))
+            new_selected.append(replace_mask[:, int(chunk_idx)])
+            new_surrogate_lengths.append(surrogate_lengths[:, int(chunk_idx)])
+
+        if new_slices:
+            new_replace_mask = torch.stack(new_selected, dim=1).to(dtype=torch.bool)
+            new_surrogate_lengths_tensor = torch.stack(new_surrogate_lengths, dim=1).to(dtype=torch.long)
+            new_chunk_lengths = torch.tensor(
+                [int(end) - int(start) for start, end in new_slices],
+                device=plan["chunk_lengths"].device,
+                dtype=torch.long,
+            )
+        else:
+            new_replace_mask = plan["replace_mask"].new_zeros((plan["replace_mask"].shape[0], 0), dtype=torch.bool)
+            new_surrogate_lengths_tensor = plan["surrogate_lengths"].new_zeros(
+                (plan["surrogate_lengths"].shape[0], 0),
+                dtype=torch.long,
+            )
+            new_chunk_lengths = plan["chunk_lengths"].new_empty((0,), dtype=torch.long)
+
+        reserved = dict(plan)
+        reserved.update(
+            {
+                "sink_len": int(prefix_tokens),
+                "compressible_start": int(prefix_tokens),
+                "compressible_len": max(0, int(past_len) - int(prefix_tokens)),
+                "budget_compressible": max(0, int(plan["budget_past_total"]) - int(prefix_tokens)),
+                "chunk_slices": new_slices,
+                "chunk_lengths": new_chunk_lengths,
+                "replace_mask": new_replace_mask,
+                "surrogate_lengths": new_surrogate_lengths_tensor,
+                "chunk_mean_scores": plan["chunk_mean_scores"].new_zeros(
+                    (plan["chunk_mean_scores"].shape[0], len(new_slices))
+                ),
+                "chunk_max_scores": plan["chunk_max_scores"].new_zeros(
+                    (plan["chunk_max_scores"].shape[0], len(new_slices))
+                ),
+                "fast_pack_plan": None,
+            }
+        )
+        return reserved
+
+    def _raw_token_mask_from_plan(self, *, plan, past_len: int):
+        raw_mask = torch.zeros(
+            (plan["replace_mask"].shape[0], int(past_len)),
+            device=plan["replace_mask"].device,
+            dtype=torch.bool,
+        )
+        replace_mask = plan["replace_mask"].to(dtype=torch.bool)
+        for chunk_idx, (start, end) in enumerate(plan["chunk_slices"]):
+            start = max(0, int(start))
+            end = min(int(past_len), int(end))
+            if end <= start:
+                continue
+            raw_batch = ~replace_mask[:, int(chunk_idx)]
+            if bool(raw_batch.all().item()):
+                raw_mask[:, start:end] = True
+            elif bool(raw_batch.any().item()):
+                raw_mask[:, start:end] |= raw_batch.view(-1, 1)
+        return raw_mask
+
+    def _prefix_is_worth_raw_slots(self, *, plan, token_scores, value_states, prefix_tokens: int, past_len: int):
+        prefix_tokens = max(0, min(int(prefix_tokens), int(past_len)))
+        if prefix_tokens <= 0:
+            return False, 0.0, 0.0
+
+        salience = self._rank_salience(token_scores[:, :past_len]).square()
+        value_energy = value_states[:, :, :past_len, :].detach().to(dtype=torch.float32)
+        value_energy = value_energy.square().mean(dim=(1, 3))
+        value_rank = _rank01(value_energy).clamp_min(1.0 / float(max(2, int(past_len) + 1)))
+        utility = salience * value_rank
+
+        prefix_density = utility[:, :prefix_tokens].mean(dim=-1)
+        raw_mask = self._raw_token_mask_from_plan(plan=plan, past_len=past_len)
+        raw_mask[:, :prefix_tokens] = False
+        if bool(raw_mask.any().item()):
+            market_density = (
+                (utility * raw_mask.to(dtype=utility.dtype)).sum(dim=-1)
+                / raw_mask.to(dtype=utility.dtype).sum(dim=-1).clamp_min(1.0)
+            )
+        else:
+            market_density = utility[:, prefix_tokens:].mean(dim=-1) if past_len > prefix_tokens else prefix_density
+        selected = bool((prefix_density >= market_density).all().item())
+        return selected, float(prefix_density.mean().item()), float(market_density.mean().item())
+
+    def _raw_prefix_run_length(self, *, plan, past_len: int):
+        raw_mask = self._raw_token_mask_from_plan(plan=plan, past_len=past_len)
+        if raw_mask.numel() <= 0:
+            return 0.0
+        run_lengths = []
+        for batch_idx in range(int(raw_mask.shape[0])):
+            raw = raw_mask[int(batch_idx)]
+            if raw.numel() <= 0 or not bool(raw[0].item()):
+                run_lengths.append(0)
+                continue
+            non_raw = torch.nonzero(~raw, as_tuple=False).flatten()
+            run_lengths.append(int(non_raw[0].item()) if non_raw.numel() else int(raw.numel()))
+        return float(sum(run_lengths) / len(run_lengths)) if run_lengths else 0.0
+
+    def _sink_signal_stats(self, *, token_scores, prefix_tokens: int, past_len: int):
+        scores = token_scores[:, :past_len].detach().to(dtype=torch.float32).clamp_min(0.0)
+        if scores.numel() <= 0 or int(past_len) <= 0:
+            return {}
+        mass = scores.sum(dim=-1).clamp_min(1e-12)
+        positions = torch.linspace(0.0, 1.0, int(past_len), device=scores.device, dtype=torch.float32)
+        prob = scores / mass.view(-1, 1)
+        entropy = -(prob * prob.clamp_min(1e-12).log()).sum(dim=-1) / math.log(max(2, int(past_len)))
+        center = (prob * positions.view(1, -1)).sum(dim=-1)
+        prefix_tokens = max(0, min(int(prefix_tokens), int(past_len)))
+        early_len = max(prefix_tokens, int(math.ceil(float(past_len) * 0.05)))
+        late_len = max(prefix_tokens, int(math.ceil(float(past_len) * 0.05)))
+        topk = max(1, min(int(past_len), int(math.ceil(math.sqrt(max(1, int(past_len)))))))
+        top_values, top_indices = torch.topk(scores, k=topk, dim=-1)
+        top_mass = top_values.sum(dim=-1) / mass
+        top_center = positions.index_select(0, top_indices.reshape(-1)).reshape(top_indices.shape)
+        top_center = (top_center * top_values).sum(dim=-1) / top_values.sum(dim=-1).clamp_min(1e-12)
+        prefix_mass = (
+            scores[:, :prefix_tokens].sum(dim=-1) / mass
+            if prefix_tokens > 0
+            else scores.new_zeros(scores.shape[0])
+        )
+        early_mass = scores[:, :early_len].sum(dim=-1) / mass
+        late_mass = scores[:, max(0, int(past_len) - late_len) :].sum(dim=-1) / mass
+        middle_start = early_len
+        middle_end = max(middle_start, int(past_len) - late_len)
+        middle_mass = (
+            scores[:, middle_start:middle_end].sum(dim=-1) / mass
+            if middle_end > middle_start
+            else scores.new_zeros(scores.shape[0])
+        )
+        return {
+            "surrogate_kv_dynamic_sink_signal_entropy": float(entropy.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_center": float(center.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_top_center": float(top_center.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_top_mass": float(top_mass.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_prefix_mass": float(prefix_mass.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_early_mass": float(early_mass.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_middle_mass": float(middle_mass.mean().item()),
+            "surrogate_kv_dynamic_sink_signal_late_mass": float(late_mass.mean().item()),
+        }
+
+    @staticmethod
+    def _mean_count(values) -> float:
+        return float(sum(values) / len(values)) if values else 0.0
+
+    def _prefix_action_summary(self, *, plan, prefix_tokens: int):
+        raw_counts, surrogate_counts, dropped_counts = self._count_prefix_actions(
+            plan=plan,
+            prefix_tokens=prefix_tokens,
+        )
+        return {
+            "raw_min": min(raw_counts) if raw_counts else 0,
+            "raw_mean": self._mean_count(raw_counts),
+            "surrogate_mean": self._mean_count(surrogate_counts),
+            "dropped_mean": self._mean_count(dropped_counts),
+        }
+
+    def _record_dynamic_sink_stats(
+        self,
+        *,
+        selected_sink: int,
+        candidate_sink: int,
+        effective_capacity_prompt: int,
+        recent_len: int,
+        sink_preference: int,
+        plan=None,
+        plan_failed: bool = False,
+        prefix_summary=None,
+        prefix_quality=None,
+        signal_stats=None,
+    ) -> None:
+        allocator_stats = (plan or {}).get("allocator_stats") or {}
+        prefix_summary = prefix_summary or {}
+        prefix_quality = prefix_quality or {}
+        prefix_kept_raw = int(prefix_quality.get("prefix_kept_raw", selected_sink))
+        stats = {
+            "surrogate_kv_dynamic_sink_active": 1,
+            "surrogate_kv_dynamic_sink_plan_failed": int(bool(plan_failed)),
+            "surrogate_kv_dynamic_sink_selected": int(selected_sink),
+            "surrogate_kv_dynamic_sink_preference": int(sink_preference),
+            "surrogate_kv_dynamic_sink_candidate_tokens": int(candidate_sink),
+            "surrogate_kv_dynamic_sink_budget_tokens": int(max(0, effective_capacity_prompt - recent_len)),
+            "surrogate_kv_dynamic_sink_chosen_plan_value": float((plan or {}).get("plan_value") or 0.0),
+            "surrogate_kv_dynamic_sink_objective": float(allocator_stats.get("ks_run_objective_value", 0.0) or 0.0),
+            "surrogate_kv_sink_allocator_active": 1,
+            "surrogate_kv_sink_allocator_plan_failed": int(bool(plan_failed)),
+            "surrogate_kv_sink_allocator_prefix_kept_raw": prefix_kept_raw,
+            "surrogate_kv_sink_allocator_candidate_tokens": int(candidate_sink),
+            "surrogate_kv_sink_allocator_budget_tokens": int(max(0, effective_capacity_prompt - recent_len)),
+            "surrogate_kv_sink_allocator_raw_prefix_tokens": float(prefix_summary.get("raw_mean", 0.0)),
+            "surrogate_kv_sink_allocator_surrogate_prefix_tokens": float(prefix_summary.get("surrogate_mean", 0.0)),
+            "surrogate_kv_sink_allocator_dropped_prefix_tokens": float(prefix_summary.get("dropped_mean", 0.0)),
+            "surrogate_kv_sink_allocator_plan_value": float((plan or {}).get("plan_value") or 0.0),
+            "surrogate_kv_sink_allocator_objective": float(allocator_stats.get("ks_run_objective_value", 0.0) or 0.0),
+        }
+        stats.update({key: value for key, value in prefix_quality.items() if key != "prefix_kept_raw"})
+        if signal_stats:
+            stats.update(signal_stats)
+        self._last_sink_allocator_stats = stats
+
+    def _plan_cache_with_dynamic_sink(
+        self,
+        *,
+        value_states,
+        token_scores,
+        past_len: int,
+        recent_len: int,
+        effective_capacity_prompt: int,
+    ):
+        candidate_sink = min(max(0, int(self.sink_tokens)), max(0, int(past_len)))
+        sink_preference = max(-1, min(1, int(getattr(self, "sink_preference", 0) or 0)))
+        if sink_preference != 0:
+            plan = self._plan_frontier_allocation(
+                token_scores=token_scores,
+                past_len=past_len,
+                recent_len=recent_len,
+                effective_capacity_prompt=effective_capacity_prompt,
+                sink_len=candidate_sink if sink_preference > 0 else 0,
+            )
+            if plan is None:
+                self._record_dynamic_sink_stats(
+                    selected_sink=0,
+                    candidate_sink=candidate_sink,
+                    effective_capacity_prompt=effective_capacity_prompt,
+                    recent_len=recent_len,
+                    sink_preference=sink_preference,
+                    plan_failed=True,
+                )
+                return None
+            selected_sink = int(sink_preference > 0 and candidate_sink > 0)
+            if selected_sink:
+                prefix_summary = {
+                    "raw_min": int(candidate_sink),
+                    "raw_mean": float(candidate_sink),
+                    "surrogate_mean": 0.0,
+                    "dropped_mean": 0.0,
+                }
+            else:
+                prefix_summary = self._prefix_action_summary(
+                    plan=plan,
+                    prefix_tokens=candidate_sink,
+                )
+            self._record_dynamic_sink_stats(
+                selected_sink=selected_sink,
+                candidate_sink=candidate_sink,
+                effective_capacity_prompt=effective_capacity_prompt,
+                recent_len=recent_len,
+                sink_preference=sink_preference,
+                plan=plan,
+                prefix_summary=prefix_summary,
+                signal_stats=self._sink_signal_stats(
+                    token_scores=token_scores,
+                    prefix_tokens=candidate_sink,
+                    past_len=past_len,
+                ),
+            )
+            return plan
+
+        plan = self._plan_frontier_allocation(
+            token_scores=token_scores,
+            past_len=past_len,
+            recent_len=recent_len,
+            effective_capacity_prompt=effective_capacity_prompt,
+            sink_len=0,
+        )
+        if plan is None:
+            self._record_dynamic_sink_stats(
+                selected_sink=0,
+                candidate_sink=candidate_sink,
+                effective_capacity_prompt=effective_capacity_prompt,
+                recent_len=recent_len,
+                sink_preference=sink_preference,
+                plan_failed=True,
+            )
+            return None
+
+        prefix_summary = self._prefix_action_summary(
+            plan=plan,
+            prefix_tokens=candidate_sink,
+        )
+        prefix_kept_raw = candidate_sink > 0 and int(prefix_summary["raw_min"]) >= int(candidate_sink)
+        prefix_competes, prefix_density, raw_density = self._prefix_is_worth_raw_slots(
+            plan=plan,
+            token_scores=token_scores,
+            value_states=value_states,
+            prefix_tokens=candidate_sink,
+            past_len=past_len,
+        )
+        raw_prefix_run_len = self._raw_prefix_run_length(plan=plan, past_len=past_len)
+        coherent_prefix_run = raw_prefix_run_len >= float(
+            candidate_sink + max(1, int(self.spec.dynamic_anchor_width or candidate_sink))
+        )
+        selected_sink = int(prefix_kept_raw and prefix_competes and coherent_prefix_run)
+        chosen_plan = (
+            self._reserve_prefix_as_sink(plan=plan, prefix_tokens=candidate_sink, past_len=past_len)
+            if selected_sink
+            else plan
+        )
+        self._record_dynamic_sink_stats(
+            selected_sink=selected_sink,
+            candidate_sink=candidate_sink,
+            effective_capacity_prompt=effective_capacity_prompt,
+            recent_len=recent_len,
+            sink_preference=sink_preference,
+            plan=chosen_plan,
+            prefix_summary=prefix_summary,
+            prefix_quality={
+                "surrogate_kv_dynamic_sink_prefix_density": float(prefix_density),
+                "surrogate_kv_dynamic_sink_raw_market_density": float(raw_density),
+                "surrogate_kv_dynamic_sink_prefix_competes": int(prefix_competes),
+                "surrogate_kv_dynamic_sink_raw_prefix_run_tokens": float(raw_prefix_run_len),
+                "surrogate_kv_dynamic_sink_coherent_prefix_run": int(coherent_prefix_run),
+                "prefix_kept_raw": int(prefix_kept_raw),
+            },
+            signal_stats=self._sink_signal_stats(
+                token_scores=token_scores,
+                prefix_tokens=candidate_sink,
+                past_len=past_len,
+            ),
+        )
+        return chosen_plan
+
+    def _count_prefix_actions(self, *, plan, prefix_tokens: int):
+        prefix_tokens = max(0, int(prefix_tokens))
+        if prefix_tokens <= 0:
+            return [], [], []
+
+        chunk_slices = plan["chunk_slices"]
+        replace_mask = plan["replace_mask"]
+        surrogate_lengths = plan["surrogate_lengths"]
+        raw_counts = []
+        surrogate_counts = []
+        dropped_counts = []
+        for batch_idx in range(int(replace_mask.shape[0])):
+            raw_tokens = 0
+            surrogate_tokens = 0
+            dropped_tokens = 0
+            for chunk_idx, (start, end) in enumerate(chunk_slices):
+                start = int(start)
+                end = int(end)
+                overlap = max(0, min(end, prefix_tokens) - max(start, 0))
+                if overlap <= 0:
+                    if start >= prefix_tokens:
+                        break
+                    continue
+                selected = bool(replace_mask[batch_idx, int(chunk_idx)].item())
+                if not selected:
+                    raw_tokens += int(overlap)
+                elif int(surrogate_lengths[batch_idx, int(chunk_idx)].item()) > 0:
+                    surrogate_tokens += int(overlap)
+                else:
+                    dropped_tokens += int(overlap)
+            raw_counts.append(int(raw_tokens))
+            surrogate_counts.append(int(surrogate_tokens))
+            dropped_counts.append(int(dropped_tokens))
+        return raw_counts, surrogate_counts, dropped_counts
+
     def _chunk_slices(self, length: int, chunk_size: int) -> List[Tuple[int, int]]:
         cache_key = (int(length), int(chunk_size))
         cached = _CHUNK_SLICE_CACHE.get(cache_key)

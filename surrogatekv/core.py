@@ -12,7 +12,11 @@ from .registry import MODE_TO_SPEC, MethodSpec
 from .schedule import adaptive_entropy_keep_ratio
 
 
-class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePrototypeMixin):
+class SurKVCluster(
+    SurrogateAllocationMixin,
+    SurrogatePackingMixin,
+    SurrogatePrototypeMixin,
+):
     def __init__(
         self,
         *,
@@ -24,6 +28,8 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         chunk_size: int = 32,
         local_radius: int = 1,
         sink_tokens: int = 4,
+        sink_policy: str = "static",
+        sink_preference: int = 0,
         layer_keep_ratio: float | None = None,
         layer_scheduler: str = "uniform",
     ) -> None:
@@ -34,6 +40,7 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         self._save_surrogates = False
         self._last_surrogates = {}
         self._last_allocator_stats = {}
+        self._last_sink_allocator_stats = {}
         self._last_fast_pack_plan = None
         self._set_config(
             mode=mode,
@@ -44,6 +51,8 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
             chunk_size=chunk_size,
             local_radius=local_radius,
             sink_tokens=sink_tokens,
+            sink_policy=sink_policy,
+            sink_preference=sink_preference,
             layer_keep_ratio=layer_keep_ratio,
             layer_scheduler=layer_scheduler,
         )
@@ -59,11 +68,14 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         chunk_size: int = 32,
         local_radius: int = 1,
         sink_tokens: int = 4,
+        sink_policy: str = "static",
+        sink_preference: int = 0,
         layer_keep_ratio: float | None = None,
         layer_scheduler: str = "uniform",
     ) -> None:
         self._last_fast_pack_plan = None
         self._last_allocator_stats = {}
+        self._last_sink_allocator_stats = {}
         self._set_config(
             mode=mode,
             window_size=window_size,
@@ -73,6 +85,8 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
             chunk_size=chunk_size,
             local_radius=local_radius,
             sink_tokens=sink_tokens,
+            sink_policy=sink_policy,
+            sink_preference=sink_preference,
             layer_keep_ratio=layer_keep_ratio,
             layer_scheduler=layer_scheduler,
         )
@@ -88,6 +102,8 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         chunk_size: int,
         local_radius: int,
         sink_tokens: int,
+        sink_policy: str,
+        sink_preference: int,
         layer_keep_ratio: float | None,
         layer_scheduler: str,
     ) -> None:
@@ -99,9 +115,31 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         self.pooling = str(pooling)
         self.chunk_size = int(chunk_size)
         self.local_radius = int(local_radius)
-        self.sink_tokens = int(sink_tokens)
+        self.sink_tokens = max(0, int(sink_tokens))
+        self.sink_policy = self._normalize_sink_policy(sink_policy)
+        self.sink_preference = max(-1, min(1, int(sink_preference or 0)))
         self.layer_keep_ratio = None if layer_keep_ratio is None else min(1.0, max(0.0, float(layer_keep_ratio)))
         self.layer_scheduler = str(layer_scheduler).strip().lower()
+
+    @staticmethod
+    def _normalize_sink_policy(policy: str | None) -> str:
+        normalized = str(policy or "static").strip().lower().replace("-", "_")
+        aliases = {
+            "default": "static",
+            "protected": "static",
+            "none": "off",
+            "false": "off",
+            "0": "off",
+            "always": "on",
+            "true": "on",
+            "1": "on",
+            "auto": "dynamic",
+            "dynamic_saliency": "dynamic",
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in {"static", "off", "on", "dynamic"}:
+            raise ValueError(f"Unsupported SurrogateKV sink policy: {policy}")
+        return normalized
 
     def enable_layout_meta(self, enable: bool = True) -> None:
         self._save_layout_meta = bool(enable)
@@ -128,8 +166,12 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
     def _record_saved_surrogate(self, *, batch_idx: int, chunk_idx: int, surrogate_key, surrogate_value) -> None:
         if not self._save_surrogates:
             return
-        self._last_surrogates[f"surrogate_k_b{batch_idx}_c{chunk_idx}"] = surrogate_key.detach().cpu().numpy().astype(np.float32)
-        self._last_surrogates[f"surrogate_v_b{batch_idx}_c{chunk_idx}"] = surrogate_value.detach().cpu().numpy().astype(np.float32)
+        self._last_surrogates[f"surrogate_k_b{batch_idx}_c{chunk_idx}"] = (
+            surrogate_key.detach().cpu().numpy().astype(np.float32)
+        )
+        self._last_surrogates[f"surrogate_v_b{batch_idx}_c{chunk_idx}"] = (
+            surrogate_value.detach().cpu().numpy().astype(np.float32)
+        )
 
     def update_kv(self, key_states, query_states, value_states, attention_mask, num_key_value_groups):
         update_start = time.perf_counter()
@@ -137,6 +179,7 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         assert key_states.shape[-2] == query_states.shape[-2]
         self.last_layout_meta = None
         self._last_allocator_stats = {}
+        self._last_sink_allocator_stats = {}
         self._last_fast_pack_plan = None
 
         bsz, _, q_len, head_dim = query_states.shape
@@ -254,50 +297,32 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         )
 
         if method_kind == "surrogate":
-            allocated = self._allocate_surrogate_frontier(
-                token_scores=token_scores,
-                chunk_slices=chunk_slices,
-                chunk_lengths=chunk_lengths,
-                target_compressed_tokens=effective_capacity_prompt,
-                sink_len=sink_len,
-                recent_len=recent_len,
-                merge_first=False,
-                current_frontier_accept=False,
-                admission_shadow_price=True,
-                frontier_region_price=True,
-                completion_order=False,
-                bounded_market=True,
-                budget_complete_peel=True,
-            )
-            if allocated is None:
-                chunk_slices = regular_chunk_slices
-                chunk_lengths = torch.tensor(
-                    [end - start for start, end in chunk_slices],
-                    device=key_states.device,
-                    dtype=torch.long,
-                )
-                surrogate_lengths = torch.ones(
-                    (token_scores.shape[0], len(chunk_slices)),
-                    device=token_scores.device,
-                    dtype=torch.long,
-                )
-                chunk_mean_scores, chunk_max_scores = self._chunk_statistics_fast_mean_max(
+            if self.sink_policy == "dynamic":
+                chosen_plan = self._plan_cache_with_dynamic_sink(
+                    value_states=value_states,
                     token_scores=token_scores,
-                    chunk_slices=chunk_slices,
+                    past_len=past_len,
+                    recent_len=recent_len,
+                    effective_capacity_prompt=effective_capacity_prompt,
                 )
-                replace_mask = self._select_low_importance_chunks(
-                    chunk_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    chunk_lengths=chunk_lengths,
-                    surrogate_lengths=surrogate_lengths,
-                    tokens_to_save=tokens_to_save,
-                )
-                self._last_allocator_stats = {"surrogate_kv_allocator_fallback": 1}
-            else:
-                chunk_slices, chunk_lengths, replace_mask, surrogate_lengths = allocated
-                chunk_mean_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
-                chunk_max_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
-                stats = dict(self._last_allocator_stats or {})
+                if chosen_plan is None:
+                    timing_breakdown["planning"] += time.perf_counter() - stage_start
+                    return finish_passthrough(sink_len=0, num_chunks=len(chunk_slices), chunk_size=adaptive_chunk_size)
+                sink_len = int(chosen_plan["sink_len"])
+                compressible_start = int(chosen_plan["compressible_start"])
+                compressible_len = int(chosen_plan["compressible_len"])
+                budget_past_total = int(chosen_plan["budget_past_total"])
+                budget_compressible = int(chosen_plan["budget_compressible"])
+                tokens_to_save = int(chosen_plan["tokens_to_save"])
+                adaptive_chunk_size = int(chosen_plan["adaptive_chunk_size"])
+                regular_chunk_slices = chosen_plan["regular_chunk_slices"]
+                chunk_slices = chosen_plan["chunk_slices"]
+                chunk_lengths = chosen_plan["chunk_lengths"]
+                replace_mask = chosen_plan["replace_mask"]
+                surrogate_lengths = chosen_plan["surrogate_lengths"]
+                chunk_mean_scores = chosen_plan["chunk_mean_scores"]
+                chunk_max_scores = chosen_plan["chunk_max_scores"]
+                stats = dict(chosen_plan.get("allocator_stats") or {})
                 stats.update(
                     {
                         "surrogate_kv_dfx_backend": 0,
@@ -306,6 +331,60 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
                     }
                 )
                 self._last_allocator_stats = stats
+                self._last_fast_pack_plan = chosen_plan.get("fast_pack_plan")
+            else:
+                allocated = self._allocate_surrogate_frontier(
+                    token_scores=token_scores,
+                    chunk_slices=chunk_slices,
+                    chunk_lengths=chunk_lengths,
+                    target_compressed_tokens=effective_capacity_prompt,
+                    sink_len=sink_len,
+                    recent_len=recent_len,
+                    merge_first=False,
+                    current_frontier_accept=False,
+                    admission_shadow_price=True,
+                    frontier_region_price=True,
+                    completion_order=False,
+                    bounded_market=True,
+                    budget_complete_peel=True,
+                )
+                if allocated is None:
+                    chunk_slices = regular_chunk_slices
+                    chunk_lengths = torch.tensor(
+                        [end - start for start, end in chunk_slices],
+                        device=key_states.device,
+                        dtype=torch.long,
+                    )
+                    surrogate_lengths = torch.ones(
+                        (token_scores.shape[0], len(chunk_slices)),
+                        device=token_scores.device,
+                        dtype=torch.long,
+                    )
+                    chunk_mean_scores, chunk_max_scores = self._chunk_statistics_fast_mean_max(
+                        token_scores=token_scores,
+                        chunk_slices=chunk_slices,
+                    )
+                    replace_mask = self._select_low_importance_chunks(
+                        chunk_scores=chunk_mean_scores,
+                        chunk_max_scores=chunk_max_scores,
+                        chunk_lengths=chunk_lengths,
+                        surrogate_lengths=surrogate_lengths,
+                        tokens_to_save=tokens_to_save,
+                    )
+                    self._last_allocator_stats = {"surrogate_kv_allocator_fallback": 1}
+                else:
+                    chunk_slices, chunk_lengths, replace_mask, surrogate_lengths = allocated
+                    chunk_mean_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
+                    chunk_max_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
+                    stats = dict(self._last_allocator_stats or {})
+                    stats.update(
+                        {
+                            "surrogate_kv_dfx_backend": 0,
+                            "surrogate_kv_bounded_frontier_market": 1,
+                            "surrogate_kv_posthoc_selector": 0,
+                        }
+                    )
+                    self._last_allocator_stats = stats
         else:
             replace_mask = self._select_low_importance_chunks(
                 chunk_scores=chunk_mean_scores,
@@ -422,7 +501,11 @@ class SurKVCluster(SurrogateAllocationMixin, SurrogatePackingMixin, SurrogatePro
         compressed_key_states = torch.cat(compressed_keys, dim=0)
         compressed_value_states = torch.cat(compressed_values, dim=0)
         timing_breakdown["packing"] += time.perf_counter() - stage_start
-        dynamic_region_lengths = [int(end) - int(start) for start, end in chunk_slices] if self.spec.dynamic_regioning else []
+        dynamic_region_lengths = (
+            [int(end) - int(start) for start, end in chunk_slices]
+            if self.spec.dynamic_regioning
+            else []
+        )
         max_selected_runs = max(selected_runs_per_batch) if selected_runs_per_batch else 0
         max_two_surrogate_chunks = max(two_surrogate_chunks_per_batch) if two_surrogate_chunks_per_batch else 0
         self.last_stats = self._stats(

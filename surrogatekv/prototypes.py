@@ -604,6 +604,13 @@ class SurrogatePrototypeMixin:
         )
 
     def _protected_sink_tokens(self) -> int:
+        policy = getattr(self, "sink_policy", "static")
+        if policy == "off":
+            return 0
+        if policy == "on":
+            return max(0, int(self.sink_tokens))
+        if policy == "dynamic":
+            return 0
         if self.spec.protected_sink:
             return max(0, int(self.sink_tokens))
         return 0
