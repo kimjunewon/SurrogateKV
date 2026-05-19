@@ -333,7 +333,7 @@ class SurKVCluster(
                 self._last_allocator_stats = stats
                 self._last_fast_pack_plan = chosen_plan.get("fast_pack_plan")
             else:
-                allocated = self._allocate_surrogate_frontier(
+                allocated = self._allocate_surrogate_by_spec(
                     token_scores=token_scores,
                     chunk_slices=chunk_slices,
                     chunk_lengths=chunk_lengths,

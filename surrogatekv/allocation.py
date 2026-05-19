@@ -133,7 +133,7 @@ class SurrogateAllocationMixin:
             device=token_scores.device,
             dtype=torch.long,
         )
-        allocated = self._allocate_surrogate_frontier(
+        allocated = self._allocate_surrogate_by_spec(
             token_scores=token_scores,
             chunk_slices=chunk_slices,
             chunk_lengths=chunk_lengths,
@@ -632,6 +632,300 @@ class SurrogateAllocationMixin:
                 return None
             prev_end = end
         return int(chunk_slices[0][0]), int(chunk_slices[-1][1])
+
+    def _ablation_atom_context(self, *, token_scores, chunk_slices: Sequence[Tuple[int, int]]):
+        span = self._contiguous_chunk_span(chunk_slices)
+        if span is None:
+            return None
+        base_start, base_end = span
+        if int(base_end) <= int(base_start):
+            return None
+
+        micro_len = max(1, int(self.spec.dynamic_anchor_width or (int(self.chunk_size) // 4)))
+        atom_start_arr = np.arange(int(base_start), int(base_end), int(micro_len), dtype=np.int64)
+        if atom_start_arr.size <= 0:
+            return None
+        atom_end_arr = np.minimum(atom_start_arr + int(micro_len), int(base_end)).astype(np.int64)
+        atom_len_int_arr = (atom_end_arr - atom_start_arr).astype(np.int64)
+
+        scores = token_scores[:, int(base_start) : int(base_end)].detach().to(dtype=torch.float32)
+        regular_atoms = int((int(base_end) - int(base_start)) // int(micro_len))
+        mean_parts = []
+        peak_parts = []
+        if regular_atoms > 0:
+            regular_tokens = int(regular_atoms) * int(micro_len)
+            regular = scores[:, :regular_tokens].reshape(scores.shape[0], int(regular_atoms), int(micro_len))
+            mean_parts.append(regular.mean(dim=(0, 2)))
+            peak_parts.append(regular.max(dim=2).values.max(dim=0).values)
+        if regular_atoms < int(atom_start_arr.size):
+            segment = scores[:, int(regular_atoms) * int(micro_len) :]
+            mean_parts.append(segment.mean(dim=(0, 1), keepdim=False).view(1))
+            peak_parts.append(segment.max(dim=1).values.max(dim=0).values.view(1))
+        if not mean_parts:
+            return None
+
+        atom_mean = torch.cat(mean_parts, dim=0).view(1, -1)
+        atom_peak = torch.cat(peak_parts, dim=0).view(1, -1)
+        mean_rank_t = _rank01(atom_mean)[0]
+        peak_rank_t = _rank01(atom_peak)[0]
+        atom_risk_t = torch.maximum(mean_rank_t, peak_rank_t)
+        atom_risk_arr = atom_risk_t.detach().cpu().numpy().astype(np.float64) + 1e-6
+        mean_risk_arr = mean_rank_t.detach().cpu().numpy().astype(np.float64) + 1e-6
+        atom_len_arr = np.maximum(1.0, atom_len_int_arr.astype(np.float64))
+
+        tail_floor = 1.0 / float(max(2, int(atom_start_arr.size) + 1))
+        atom_signal_arr = -np.log(np.maximum(float(tail_floor), 1.0 - np.clip(atom_risk_arr, 0.0, 1.0)))
+        mean_signal_arr = -np.log(np.maximum(float(tail_floor), 1.0 - np.clip(mean_risk_arr, 0.0, 1.0)))
+        raw_value_arr = atom_signal_arr * atom_signal_arr * atom_len_arr
+        raw_density_arr = raw_value_arr / np.maximum(atom_len_arr, 1.0)
+        prefix_len = np.concatenate(([0], np.cumsum(atom_len_int_arr))).astype(np.int64)
+
+        return {
+            "atom_start_arr": atom_start_arr,
+            "atom_end_arr": atom_end_arr,
+            "atom_len_int_arr": atom_len_int_arr,
+            "atom_len_arr": atom_len_arr,
+            "mean_signal_arr": mean_signal_arr,
+            "raw_value_arr": raw_value_arr,
+            "raw_density_arr": raw_density_arr,
+            "atom_risk_arr": atom_risk_arr,
+            "prefix_len": prefix_len,
+            "device": token_scores.device,
+            "full_cost": int(atom_len_int_arr.sum()),
+        }
+
+    def _materialize_ablation_actions(self, *, ctx, actions: np.ndarray, budget_entries: int, allocator_name: str):
+        atom_start_arr = ctx["atom_start_arr"]
+        atom_end_arr = ctx["atom_end_arr"]
+        atom_len_int_arr = ctx["atom_len_int_arr"]
+        raw_value_arr = ctx["raw_value_arr"]
+        prefix_len = ctx["prefix_len"]
+        device = ctx["device"]
+
+        actions_arr = np.asarray(actions, dtype=np.int8)
+        if actions_arr.size <= 0:
+            return None
+        changes = np.flatnonzero(actions_arr[1:] != actions_arr[:-1]).astype(np.int64) + 1
+        starts = np.concatenate((np.asarray([0], dtype=np.int64), changes))
+        ends = np.concatenate((changes, np.asarray([actions_arr.size], dtype=np.int64)))
+        run_actions = actions_arr[starts]
+        run_lens = prefix_len[ends] - prefix_len[starts]
+
+        raw_mask = run_actions == 2
+        surrogate_mask = run_actions == 1
+        drop_mask = run_actions == 0
+        raw_tokens = int(run_lens[raw_mask].sum()) if raw_mask.any() else 0
+        surrogate_tokens = int(run_lens[surrogate_mask].sum()) if surrogate_mask.any() else 0
+        drop_tokens = int(run_lens[drop_mask].sum()) if drop_mask.any() else 0
+        used_entries = int(raw_tokens) + int(surrogate_mask.sum())
+        new_slices = tuple(
+            (int(atom_start_arr[int(start_idx)]), int(atom_end_arr[int(end_idx) - 1]))
+            for start_idx, end_idx in zip(starts.tolist(), ends.tolist())
+        )
+        new_selected = run_actions != 2
+        new_surrogate_lengths = np.where(run_actions == 1, 1, 0).astype(np.int64)
+        new_chunk_lengths_arr = (
+            atom_end_arr[ends.astype(np.int64) - 1] - atom_start_arr[starts.astype(np.int64)]
+        ).astype(np.int64, copy=False)
+        output_lengths_arr = np.where(
+            new_selected,
+            new_surrogate_lengths,
+            new_chunk_lengths_arr,
+        ).astype(np.int64, copy=False)
+        selected_indices = np.flatnonzero(new_selected).astype(np.int64)
+        surrogate_indices = selected_indices[new_surrogate_lengths[selected_indices] > 0]
+        self._last_fast_pack_plan = {
+            "chunk_slices": tuple(new_slices),
+            "selected_mask_list": [bool(v) for v in new_selected.tolist()],
+            "output_length_list": [int(v) for v in output_lengths_arr.tolist()],
+            "raw_spans": [
+                (int(new_slices[idx][0]), int(new_slices[idx][1]))
+                for idx in range(len(new_slices))
+                if not bool(new_selected[idx])
+            ],
+            "selected_chunk_indices_list": [int(v) for v in selected_indices.tolist()],
+            "surrogate_chunk_indices_list": [int(v) for v in surrogate_indices.tolist()],
+            "surrogate_lengths_list": [
+                int(new_surrogate_lengths[int(idx)])
+                for idx in surrogate_indices.tolist()
+            ],
+        }
+        self._last_allocator_stats = {
+            "ablation_allocator": allocator_name,
+            "ks_run_raw_tokens": int(raw_tokens),
+            "ks_run_raw_regions": int(raw_mask.sum()),
+            "ks_run_surrogate_regions": int(surrogate_mask.sum()),
+            "ks_run_surrogate_tokens": int(surrogate_tokens),
+            "ks_run_drop_tokens": int(drop_tokens),
+            "ks_run_drop_regions": int(drop_mask.sum()),
+            "ks_run_budget_entries": int(budget_entries),
+            "ks_run_full_cost": int(ctx["full_cost"]),
+            "ks_run_used_entries": int(used_entries),
+            "ks_run_budget_gap": int(budget_entries) - int(used_entries),
+            "ks_run_raw_value": float(raw_value_arr[actions_arr == 2].sum()) if bool(np.any(actions_arr == 2)) else 0.0,
+            "ks_run_candidate_surrogates": int(surrogate_mask.sum()),
+            "ks_run_selected_surrogates": int(surrogate_mask.sum()),
+            "ks_run_merge_accepts": 0,
+        }
+        new_chunk_lengths = torch.as_tensor(new_chunk_lengths_arr, device=device, dtype=torch.long)
+        new_replace_mask = torch.as_tensor(new_selected[None, :], device=device, dtype=torch.bool)
+        new_surrogate_lengths_tensor = torch.as_tensor(
+            new_surrogate_lengths[None, :],
+            device=device,
+            dtype=torch.long,
+        )
+        return new_slices, new_chunk_lengths, new_replace_mask, new_surrogate_lengths_tensor
+
+    def _allocate_ablation_rawdrop(
+        self,
+        *,
+        token_scores,
+        chunk_slices: Sequence[Tuple[int, int]],
+        target_compressed_tokens: int,
+        sink_len: int,
+        recent_len: int,
+    ):
+        ctx = self._ablation_atom_context(token_scores=token_scores, chunk_slices=chunk_slices)
+        if ctx is None:
+            return None
+        budget_entries = max(1, int(target_compressed_tokens) - int(sink_len) - int(recent_len))
+        num_atoms = int(ctx["atom_start_arr"].size)
+        full_cost = int(ctx["full_cost"])
+        if int(budget_entries) >= int(full_cost):
+            actions = np.full((num_atoms,), 2, dtype=np.int8)
+            return self._materialize_ablation_actions(
+                ctx=ctx,
+                actions=actions,
+                budget_entries=budget_entries,
+                allocator_name="rawdrop",
+            )
+
+        atom_indices = np.arange(num_atoms, dtype=np.int64)
+        order = np.lexsort((atom_indices, -ctx["raw_density_arr"], -ctx["raw_value_arr"]))
+        actions = np.zeros((num_atoms,), dtype=np.int8)
+        used_entries = 0
+        for atom_idx in order.tolist():
+            atom_len = int(ctx["atom_len_int_arr"][int(atom_idx)])
+            if used_entries + atom_len > int(budget_entries):
+                continue
+            actions[int(atom_idx)] = 2
+            used_entries += atom_len
+            if used_entries >= int(budget_entries):
+                break
+        return self._materialize_ablation_actions(
+            ctx=ctx,
+            actions=actions,
+            budget_entries=budget_entries,
+            allocator_name="rawdrop",
+        )
+
+    def _allocate_ablation_allsur(
+        self,
+        *,
+        token_scores,
+        chunk_slices: Sequence[Tuple[int, int]],
+        target_compressed_tokens: int,
+        sink_len: int,
+        recent_len: int,
+    ):
+        ctx = self._ablation_atom_context(token_scores=token_scores, chunk_slices=chunk_slices)
+        if ctx is None:
+            return None
+        budget_entries = max(1, int(target_compressed_tokens) - int(sink_len) - int(recent_len))
+        num_atoms = int(ctx["atom_start_arr"].size)
+        full_cost = int(ctx["full_cost"])
+        if int(budget_entries) >= int(full_cost):
+            actions = np.full((num_atoms,), 2, dtype=np.int8)
+            return self._materialize_ablation_actions(
+                ctx=ctx,
+                actions=actions,
+                budget_entries=budget_entries,
+                allocator_name="allsur",
+            )
+
+        actions = np.ones((num_atoms,), dtype=np.int8)
+        current_cost = 1
+
+        def raw_delta(atom_idx: int) -> int:
+            if int(actions[int(atom_idx)]) == 2:
+                return 0
+            left_sur = int(atom_idx) > 0 and int(actions[int(atom_idx) - 1]) == 1
+            right_sur = int(atom_idx) + 1 < num_atoms and int(actions[int(atom_idx) + 1]) == 1
+            atom_len = int(ctx["atom_len_int_arr"][int(atom_idx)])
+            if left_sur and right_sur:
+                return int(atom_len) + 1
+            if left_sur or right_sur:
+                return int(atom_len)
+            return max(0, int(atom_len) - 1)
+
+        heap: List[Tuple[float, float, int, int]] = []
+        for atom_idx in range(num_atoms):
+            delta = max(1, raw_delta(atom_idx))
+            value = float(ctx["raw_value_arr"][int(atom_idx)])
+            density = value / float(delta)
+            heapq.heappush(heap, (-density, -value, int(atom_idx), int(delta)))
+
+        while heap and int(current_cost) < int(budget_entries):
+            _neg_density, _neg_value, atom_idx, queued_delta = heapq.heappop(heap)
+            if int(actions[int(atom_idx)]) == 2:
+                continue
+            fresh_delta = int(raw_delta(atom_idx))
+            if fresh_delta <= 0:
+                continue
+            if fresh_delta != int(queued_delta):
+                value = float(ctx["raw_value_arr"][int(atom_idx)])
+                density = value / float(max(1, fresh_delta))
+                heapq.heappush(heap, (-density, -value, int(atom_idx), int(fresh_delta)))
+                continue
+            if int(current_cost) + int(fresh_delta) > int(budget_entries):
+                continue
+            actions[int(atom_idx)] = 2
+            current_cost += int(fresh_delta)
+
+        return self._materialize_ablation_actions(
+            ctx=ctx,
+            actions=actions,
+            budget_entries=budget_entries,
+            allocator_name="allsur",
+        )
+
+    def _allocate_surrogate_by_spec(
+        self,
+        *,
+        token_scores,
+        chunk_slices: Sequence[Tuple[int, int]],
+        chunk_lengths,
+        target_compressed_tokens: int,
+        sink_len: int,
+        recent_len: int,
+        **frontier_kwargs,
+    ):
+        allocator = str(getattr(self.spec, "dynamic_allocator", "") or "")
+        if allocator == "ablation_rawdrop":
+            return self._allocate_ablation_rawdrop(
+                token_scores=token_scores,
+                chunk_slices=chunk_slices,
+                target_compressed_tokens=target_compressed_tokens,
+                sink_len=sink_len,
+                recent_len=recent_len,
+            )
+        if allocator == "ablation_allsur":
+            return self._allocate_ablation_allsur(
+                token_scores=token_scores,
+                chunk_slices=chunk_slices,
+                target_compressed_tokens=target_compressed_tokens,
+                sink_len=sink_len,
+                recent_len=recent_len,
+            )
+        return self._allocate_surrogate_frontier(
+            token_scores=token_scores,
+            chunk_slices=chunk_slices,
+            chunk_lengths=chunk_lengths,
+            target_compressed_tokens=target_compressed_tokens,
+            sink_len=sink_len,
+            recent_len=recent_len,
+            **frontier_kwargs,
+        )
 
     def _chunk_statistics_irregular_prefix_mean_max(self, *, token_scores, chunk_slices: Sequence[Tuple[int, int]]):
         span = self._contiguous_chunk_span(chunk_slices)
