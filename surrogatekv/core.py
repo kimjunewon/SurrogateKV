@@ -66,6 +66,9 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return bool(default)
 
 
+_SURKV_HEADWISE_ADA_OVERLAY = _env_flag("SURKV_HEADWISE_ADA_OVERLAY", False)
+
+
 def _device_key(device: torch.device) -> str:
     index = "" if device.index is None else str(device.index)
     return f"{device.type}:{index}"
@@ -3396,24 +3399,26 @@ class SurKVCluster:
         ):
             residual_bank = precomputed_residual_scores[:, : int(score_bank_heads), : int(past_len)].detach()
 
-        ada_overlay_result = self._update_kv_headwise_ada_overlay(
-            key_states=key_states,
-            value_states=value_states,
-            precomputed_head_scores=score_bank,
-            precomputed_residual_scores=residual_bank,
-            key_head_caps=key_head_caps,
-            groups=int(groups),
-            recent_len=int(recent_len),
-            past_len=int(past_len),
-            sink_len=int(sink_len),
-            configured_keep_ratio=float(configured_keep_ratio),
-            update_start=float(update_start),
-            score_seconds=float(score_seconds),
-            exact_query_heads=bool(exact_query_heads),
-            original_key_heads=int(original_key_heads),
-            original_groups=int(original_groups),
-            gqa_capacity_fusion=str(gqa_capacity_fusion),
-        )
+        ada_overlay_result = None
+        if _SURKV_HEADWISE_ADA_OVERLAY:
+            ada_overlay_result = self._update_kv_headwise_ada_overlay(
+                key_states=key_states,
+                value_states=value_states,
+                precomputed_head_scores=score_bank,
+                precomputed_residual_scores=residual_bank,
+                key_head_caps=key_head_caps,
+                groups=int(groups),
+                recent_len=int(recent_len),
+                past_len=int(past_len),
+                sink_len=int(sink_len),
+                configured_keep_ratio=float(configured_keep_ratio),
+                update_start=float(update_start),
+                score_seconds=float(score_seconds),
+                exact_query_heads=bool(exact_query_heads),
+                original_key_heads=int(original_key_heads),
+                original_groups=int(original_groups),
+                gqa_capacity_fusion=str(gqa_capacity_fusion),
+            )
         if ada_overlay_result is not None:
             return ada_overlay_result
 
