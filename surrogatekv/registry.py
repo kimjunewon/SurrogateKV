@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from .allocation import plan_surrogate_cache
-from .prototypes import build_chunk_exact_surrogates
 from .registry_base import MethodSpec
 
 
 SURROGATE_KV = MethodSpec(
     name="SurrogateKV",
     mode="surrogate_kv",
-    build_surrogates=build_chunk_exact_surrogates,
-    plan_chunks=plan_surrogate_cache,
     direct_strategy="local",
     surrogate_mode="norm_rms_mean",
     selection_strategy="dynamic",
@@ -21,8 +17,6 @@ SURROGATE_KV = MethodSpec(
 SURROGATE_KV_ADA = MethodSpec(
     name="SurrogateKV-Ada",
     mode="surrogate_kv_ada",
-    build_surrogates=build_chunk_exact_surrogates,
-    plan_chunks=plan_surrogate_cache,
     direct_strategy="local",
     surrogate_mode="norm_rms_mean",
     selection_strategy="dynamic",
@@ -36,8 +30,6 @@ SURROGATE_KV_ADA = MethodSpec(
 SURROGATE_KV_DYNAMIC = MethodSpec(
     name="SurrogateKV-Dynamic",
     mode="surrogate_kv_dynamic_layer",
-    build_surrogates=build_chunk_exact_surrogates,
-    plan_chunks=plan_surrogate_cache,
     direct_strategy="local",
     surrogate_mode="norm_rms_mean",
     selection_strategy="dynamic",

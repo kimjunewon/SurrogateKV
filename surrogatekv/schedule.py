@@ -5,39 +5,6 @@ import math
 import torch
 
 
-def normalize_token_weights(token_scores, *, dtype, device):
-    weights = torch.clamp(token_scores.to(device=device, dtype=torch.float32), min=1e-6)
-    weights = weights / torch.clamp(weights.sum(), min=1e-6)
-    return weights.to(dtype=dtype)
-
-
-def token_weight_summary(token_scores) -> tuple[float, float]:
-    if token_scores.numel() <= 0:
-        return 0.0, 0.0
-    weights = normalize_token_weights(token_scores, dtype=torch.float32, device=token_scores.device)
-    max_weight = float(weights.max().item())
-    if weights.numel() <= 1:
-        return 0.0, max_weight
-    entropy = -(weights * torch.log(torch.clamp(weights, min=1e-12))).sum()
-    entropy = entropy / math.log(weights.numel())
-    return float(entropy.item()), max_weight
-
-
-def selected_token_weight_stats(*, token_scores, chunk_slices, replace_mask) -> tuple[float | None, float | None]:
-    entropies = []
-    max_weights = []
-    for batch_idx in range(replace_mask.shape[0]):
-        selected_indices = torch.nonzero(replace_mask[batch_idx], as_tuple=False).flatten().tolist()
-        for chunk_idx in selected_indices:
-            start, end = chunk_slices[chunk_idx]
-            entropy, max_weight = token_weight_summary(token_scores[batch_idx, start:end])
-            entropies.append(entropy)
-            max_weights.append(max_weight)
-    if not entropies:
-        return None, None
-    return sum(entropies) / len(entropies), sum(max_weights) / len(max_weights)
-
-
 def adaptive_entropy_keep_ratio(*, base_keep_ratio: float, chunk_scores, q_len: int) -> float:
     safe_q_len = max(1, int(q_len))
     min_keep_ratio = 1.0 / safe_q_len
