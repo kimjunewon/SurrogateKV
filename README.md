@@ -12,10 +12,10 @@ from surrogatekv import SurKVCluster, SURROGATEKV_METHOD_TO_MODE
 
 - `surrogatekv/`: flat runtime package for the paper-facing implementation
 - `surrogatekv/core.py`: cache update orchestration
-- `surrogatekv/allocation.py`: SurrogateKV raw/surrogate/drop allocator
-- `surrogatekv/prototypes.py`: surrogate prototype construction
-- `surrogatekv/packing.py`: compressed KV packing for SurrogateKV and Drop
-- `surrogatekv/registry.py`: method names, aliases, and optional Drop registration
+- `surrogatekv/methods.py`: method specs split by baseline profile
+  (`surrogatekv-snap`, `surrogatekv-ada`, `surrogatekv-dynamic`,
+  `surrogatekv-pyramid`)
+- `surrogatekv/registry.py`: method registry assembled from `surrogatekv/methods.py`
 - `run/longbench/`: LongBench prediction, evaluation, and example launch
   scripts, matching the shape of external reference repos such as DynamicKV
 - `data/`: empty dataset slots, kept only as public-repo placeholders
@@ -50,7 +50,7 @@ python run/longbench/pred.py \
   --data_file data/LongBench/qasper.jsonl \
   --save_dir results \
   --model_path /path/to/model \
-  --method SurrogateKV \
+  --method SurrogateKV-Ada \
   --max_capacity_prompts 512
 ```
 
@@ -86,5 +86,6 @@ repo remains publishable as the method implementation itself.
   entrypoints, and empty data slots here.
 - Do not commit model weights, datasets, experiment logs, summaries, plots, or
   workspace-only helper tools.
-- New SurrogateKV variants should start as a small `registry.py` spec and keep any
-  new implementation code in the runtime module it actually belongs to.
+- New SurrogateKV variants should start as a small spec in
+  `surrogatekv/methods.py` and keep any new implementation code in the runtime
+  module it actually belongs to.

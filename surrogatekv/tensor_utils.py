@@ -1,62 +1,112 @@
 from __future__ import annotations
 
-import heapq
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
 import torch
-import torch.nn.functional as F
-
-from .selection import select_chunks_fast
 
 
-_CHUNK_SLICE_CACHE: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
-_RECENT_MASK_CACHE: Dict[Tuple[str, int, str], torch.Tensor] = {}
+def normalize_token_weights(token_scores, *, dtype, device):
+    weights = torch.clamp(token_scores.to(device=device, dtype=torch.float32), min=1e-6)
+    weights = weights / torch.clamp(weights.sum(), min=1e-6)
+    return weights.to(dtype=dtype)
 
 
-def _device_key(device: torch.device) -> str:
-    index = "" if device.index is None else str(device.index)
-    return f"{device.type}:{index}"
+def mapping_alpha_from_weights(weights) -> float:
+    flat = weights.detach().to(dtype=torch.float32).reshape(-1)
+    if flat.numel() <= 1:
+        return 1.0
+    uniform = 1.0 / float(flat.numel())
+    peak = float(flat.max().item())
+    normalized_peak = (peak - uniform) / max(1e-6, 1.0 - uniform)
+    normalized_peak = max(0.0, min(1.0, normalized_peak))
+    return math.sqrt(normalized_peak)
 
 
-def _cache_put(cache: dict, key, value, *, max_size: int = 256):
-    if len(cache) >= max_size:
-        cache.clear()
-    cache[key] = value
-    return value
+def token_weight_stats(weights) -> dict[str, float]:
+    flat = weights.detach().to(dtype=torch.float32).reshape(-1)
+    if flat.numel() <= 0:
+        return {"weight_entropy": 0.0, "weight_max": 0.0, "mapping_alpha": 0.0}
+    if flat.numel() == 1:
+        return {
+            "weight_entropy": 0.0,
+            "weight_max": float(flat.max().item()),
+            "mapping_alpha": 1.0,
+        }
+
+    entropy = -(flat * torch.log(torch.clamp(flat, min=1e-12))).sum()
+    entropy = entropy / math.log(flat.numel())
+    return {
+        "weight_entropy": float(entropy.item()),
+        "weight_max": float(flat.max().item()),
+        "mapping_alpha": float(mapping_alpha_from_weights(flat)),
+    }
 
 
-def _rank01(scores: torch.Tensor) -> torch.Tensor:
-    if scores.numel() <= 0:
-        return scores.to(dtype=torch.float32)
-    num_items = scores.shape[-1]
-    if num_items <= 1:
-        return torch.zeros_like(scores, dtype=torch.float32)
-    ordering = torch.argsort(scores.to(dtype=torch.float32), dim=-1, descending=False)
-    rank_values = torch.linspace(
-        0.0,
-        1.0,
-        num_items,
-        device=scores.device,
+def mapping_alpha_from_token_scores(token_scores) -> float:
+    weights = normalize_token_weights(
+        token_scores,
         dtype=torch.float32,
-    ).view(1, num_items)
-    ranks = torch.empty_like(ordering, dtype=torch.float32)
-    ranks.scatter_(1, ordering, rank_values.expand_as(ranks))
-    return ranks
+        device=token_scores.device,
+    )
+    return float(mapping_alpha_from_weights(weights))
 
 
-def _restore_mean_key_norm(key_proto: torch.Tensor, key_source: torch.Tensor, *, token_dim: int) -> torch.Tensor:
-    target_norm = key_source.to(dtype=torch.float32).norm(dim=-1).mean(dim=token_dim, keepdim=False).unsqueeze(-1)
-    current_norm = key_proto.to(dtype=torch.float32).norm(dim=-1, keepdim=True).clamp_min(1e-6)
-    return (key_proto.to(dtype=torch.float32) * (target_norm / current_norm)).to(dtype=key_proto.dtype)
+def mapping_alpha_from_chunk_score(chunk_score, reference_score, *, gamma: float = 2.0) -> float:
+    score = float(chunk_score)
+    ref = float(reference_score)
+    if ref <= 1e-12:
+        return 1.0
+    ratio = max(0.0, min(1.0, score / ref))
+    return ratio ** float(gamma)
 
 
-def _restore_rms_value_norm(value_proto: torch.Tensor, value_source: torch.Tensor, *, token_dim: int) -> torch.Tensor:
-    source_norm_sq = value_source.to(dtype=torch.float32).square().sum(dim=-1)
-    target_norm = source_norm_sq.mean(dim=token_dim, keepdim=False).clamp_min(1e-12).sqrt().unsqueeze(-1)
-    current_norm = value_proto.to(dtype=torch.float32).norm(dim=-1, keepdim=True).clamp_min(1e-6)
-    return (value_proto.to(dtype=torch.float32) * (target_norm / current_norm)).to(dtype=value_proto.dtype)
+def prototype_pair(key_tensor, value_tensor, token_scores, *, surrogate_mode: str):
+    if surrogate_mode in {"weighted_mean", "asym_key_weighted", "asym_value_weighted"}:
+        weights = normalize_token_weights(
+            token_scores,
+            dtype=key_tensor.dtype,
+            device=key_tensor.device,
+        )
+        weight_view = weights.view(1, 1, -1, 1)
+        if surrogate_mode in {"weighted_mean", "asym_key_weighted"}:
+            key_proto = (key_tensor * weight_view).sum(dim=2, keepdim=True)
+        else:
+            key_proto = key_tensor.mean(dim=2, keepdim=True)
+        if surrogate_mode in {"weighted_mean", "asym_value_weighted"}:
+            value_proto = (value_tensor * weight_view).sum(dim=2, keepdim=True)
+        else:
+            value_proto = value_tensor.mean(dim=2, keepdim=True)
+        return key_proto, value_proto, token_weight_stats(weights)
+
+    if surrogate_mode == "asym_weighted":
+        weights = normalize_token_weights(
+            token_scores,
+            dtype=key_tensor.dtype,
+            device=key_tensor.device,
+        )
+        weight_view = weights.view(1, 1, -1, 1)
+        key_proto = (key_tensor * weight_view).sum(dim=2, keepdim=True)
+        weighted_value = (value_tensor * weight_view).sum(dim=2, keepdim=True)
+        mean_value = value_tensor.mean(dim=2, keepdim=True)
+        value_proto = 0.7 * weighted_value + 0.3 * mean_value
+        return key_proto, value_proto, token_weight_stats(weights)
+
+    return (
+        key_tensor.mean(dim=2, keepdim=True),
+        value_tensor.mean(dim=2, keepdim=True),
+        None,
+    )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+def prototype_repr(key_tensor, token_scores, *, surrogate_mode: str):
+    if surrogate_mode in {"weighted_mean", "asym_weighted", "asym_key_weighted"}:
+        weights = normalize_token_weights(
+            token_scores,
+            dtype=key_tensor.dtype,
+            device=key_tensor.device,
+        )
+        weight_view = weights.view(1, 1, -1, 1)
+        proto = (key_tensor * weight_view).sum(dim=2)
+    else:
+        proto = key_tensor.mean(dim=2)
+    return proto.mean(dim=1).squeeze(0)
