@@ -349,6 +349,9 @@ class SurKVCluster:
             self.ada_floor_ratio = 0.2
         self._last_layer_budget_curve = None
 
+    def _ada_exact_query_head_cache_enabled(self) -> bool:
+        return _env_flag("SURKV_ADA_EXACT_QUERY_HEADS", True)
+
     @classmethod
     def reset_global_budget_ledger(
         cls,
@@ -538,20 +541,13 @@ class SurKVCluster:
         for capacity in capacities:
             cluster._last_allocator_stats = {}
             cluster._last_fast_pack_plan = None
-            allocated = cluster._dynamic_ksr_dfx_allocation(
+            allocated = cluster._dynamic_surrogate_kv_allocation(
                 token_scores=record["token_scores"],
                 chunk_slices=record["chunk_slices"],
                 chunk_lengths=record["chunk_lengths"],
                 target_compressed_tokens=int(capacity),
                 sink_len=int(record["sink_len"]),
                 recent_len=int(record["recent_len"]),
-                merge_first=False,
-                current_frontier_accept=False,
-                admission_shadow_price=True,
-                frontier_region_price=True,
-                completion_order=False,
-                bounded_market=True,
-                budget_complete_peel=True,
             )
             stats = dict(getattr(cluster, "_last_allocator_stats", {}) or {})
             utility = cls._global_layer_dynamic_objective(stats)
@@ -1628,91 +1624,9 @@ class SurKVCluster:
             self.spec.dynamic_regioning
             and self.spec.direct_strategy in {"local", "null"}
             and self.spec.selection_strategy == "dynamic"
-            and self.spec.dynamic_allocator in {
-                "budgeted",
-                "budget_drop",
-                "budget_drop_fast",
-                "budget_fast",
-                "budget_fast_max",
-                "budget_heap",
-                "budget_hybrid",
-                "budget_hybrid_sum",
-                "budget_hybrid_evidence",
-                "budget_cascade",
-                "budgeted_frontier",
-                "budget_dual",
-                "budget_dual_frontier",
-                "budget_multires",
-                "budget_adaptive",
-                "budget_sharp",
-                "budget_refine",
-                "budget_swap",
-                "evidence_cost",
-                "evidence_complement",
-                "evidence_complement_fullraw",
-                "evidence_complement_peakraw",
-                "evidence_marginal",
-                "evidence_mass",
-                "evidence_prune",
-                "evidence_prune_rescue",
-                "evidence_prune_rescue_value",
-                "evidence_prune_rescue_slack",
-                "evidence_tiered",
-                "evidence_topdown_tier",
-                "evidence_region_rescue",
-                "evidence_resource",
-                "evidence_resource_sharp",
-                "evidence_price_frontier",
-                "evidence_exchange",
-                "evidence_region_raw",
-                "evidence_region_frontier",
-                "evidence_mars",
-                "evidence_tri",
-                "evidence_cost_bounded",
-                "budget_frontier",
-                "budget_frontier_free",
-                "boms",
-                "raw_atom",
-                "cascade_viterbi",
-                "split_frontier",
-                "segment_resolution",
-                "unified_rd",
-                "tri_rd",
-                "energy_rd",
-                "frontier_exchange",
-                "frontier_coherent_exchange",
-                "certified_projection",
-                "merge_market",
-                "keep_sur_drop",
-                "keep_sur_drop_joint",
-                "keep_sur_drop_price",
-                "ks_cell",
-                "surrogate_kv",
-                "surkv_layer_dynamic",
-                "surrogate_kv_v2",
-                "surrogate_kv_v3",
-                "ks_run",
-                "ks_run_coarse",
-                "ks_run_merge",
-                "ks_run_merge_exact",
-                "ks_run_merge_lazy",
-                "ks_run_merge_plus",
-                "ks_run_merge_packet",
-                "ks_run_merge_repair",
-                "ks_run_merge_ledger",
-                "ks_run_merge_price",
-                "ks_run_merge_select",
-                "ks_run_merge_terminal",
-                "ks_run_dom",
-                "ks_run_dfx",
-                "ks_run_dfx4",
-                "ks_run_dfx_merge",
-                "ks_run_strict",
-                "ks_run_layout",
-            }
+            and self.spec.dynamic_allocator in {"surrogate_kv", "projected_residual"}
         )
-        segment_rd_uses_fixed_region_seed = self.spec.dynamic_allocator == "segment_rd"
-        if self.spec.dynamic_regioning and not allocator_owns_regioning and not segment_rd_uses_fixed_region_seed:
+        if self.spec.dynamic_regioning and not allocator_owns_regioning:
             chunk_slices = self._dynamic_region_slices(
                 token_scores=token_scores,
                 key_states=key_states,
@@ -1771,7 +1685,7 @@ class SurKVCluster:
         length_setup_start = time.perf_counter()
         lazy_surrogate_region_tensors = (
             allocator_owns_regioning
-            and self.spec.dynamic_allocator == "surrogate_kv"
+            and self.spec.dynamic_allocator in {"surrogate_kv", "projected_residual"}
             and self.layer_scheduler != "adaptive_entropy"
         )
         if lazy_surrogate_region_tensors:
@@ -1901,66 +1815,7 @@ class SurKVCluster:
         elif needs_peak_aware_selection:
             selection_scores = _dynamic_peak_selection_scores(chunk_mean_scores, chunk_max_scores)
         elif needs_dynamic_selection:
-            if self.spec.dynamic_allocator not in {
-                "micro_first",
-                "hybrid_anchor",
-                "budgeted",
-                "budget_drop",
-                "budget_drop_fast",
-                "budget_fast",
-                "budget_fast_max",
-                "budget_heap",
-                "budget_hybrid",
-                "budget_hybrid_sum",
-                "budget_hybrid_evidence",
-                "budget_cascade",
-                "budgeted_frontier",
-                "budget_dual",
-                "budget_dual_frontier",
-                "budget_adaptive",
-                "budget_sharp",
-                "budget_refine",
-                "budget_swap",
-                "evidence_cost",
-                "evidence_complement",
-                "evidence_complement_fullraw",
-                "evidence_complement_peakraw",
-                "evidence_marginal",
-                "evidence_mass",
-                "evidence_prune",
-                "evidence_prune_rescue",
-                "evidence_prune_rescue_value",
-                "evidence_prune_rescue_slack",
-                "evidence_tiered",
-                "evidence_topdown_tier",
-                "evidence_resource",
-                "evidence_resource_sharp",
-                "evidence_price_frontier",
-                "evidence_exchange",
-                "evidence_region_raw",
-                "evidence_region_frontier",
-                "evidence_mars",
-                "evidence_tri",
-                "evidence_cost_bounded",
-                "budget_frontier",
-                "budget_frontier_free",
-                "boms",
-                "raw_atom",
-                "cascade_viterbi",
-                "split_frontier",
-                "segment_rd",
-                "segment_resolution",
-                "unified_rd",
-                "certified_projection",
-                "frontier_coherent_exchange",
-                "importance_distortion",
-                "keep_sur_drop",
-                "keep_sur_drop_joint",
-                "keep_sur_drop_price",
-                "ks_cell",
-                "surrogate_kv",
-                "surkv_layer_dynamic",
-            }:
+            if self.spec.dynamic_allocator not in {"surrogate_kv", "projected_residual"}:
                 chunk_score_distortion = self._chunk_score_distortion_fast(
                     token_scores=token_scores,
                     chunk_slices=chunk_slices,
@@ -1988,159 +1843,7 @@ class SurKVCluster:
             and needs_dynamic_selection
         ):
             allocated = None
-            if self.spec.dynamic_allocator == "micro_first":
-                allocated = self._dynamic_micro_first_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    chunk_mean_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator in {
-                "budgeted",
-                "budgeted_frontier",
-                "budgeted_frontier_fast",
-            }:
-                allocated = self._dynamic_budgeted_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    chunk_mean_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    drop_residual=self.spec.dynamic_allocator
-                    in {"budgeted_frontier", "budgeted_frontier_fast"},
-                )
-            elif self.spec.dynamic_allocator in {"budget_drop", "budget_drop_fast"}:
-                allocated = self._dynamic_budget_drop_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    fast=self.spec.dynamic_allocator == "budget_drop_fast",
-                )
-            elif self.spec.dynamic_allocator in {"budget_fast", "budget_fast_max"}:
-                allocated = self._dynamic_budget_fast_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    chunk_mean_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    utility_mode="max" if self.spec.dynamic_allocator == "budget_fast_max" else "pressure",
-                )
-            elif self.spec.dynamic_allocator == "budget_heap":
-                allocated = self._dynamic_budget_heap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    adaptive_split=False,
-                    micro_len=int(self.spec.dynamic_anchor_width or 8),
-                )
-            elif self.spec.dynamic_allocator in {
-                "budget_hybrid",
-                "budget_hybrid_sum",
-                "budget_hybrid_evidence",
-            }:
-                if self.spec.dynamic_allocator == "budget_hybrid_sum":
-                    utility_mode = "sum"
-                elif self.spec.dynamic_allocator == "budget_hybrid_evidence":
-                    utility_mode = "evidence"
-                else:
-                    utility_mode = "pressure"
-                allocated = self._dynamic_budget_hybrid_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    utility_mode=utility_mode,
-                )
-            elif self.spec.dynamic_allocator == "budget_cascade":
-                allocated = self._dynamic_budget_heap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    adaptive_split=False,
-                    micro_len=int(self.spec.dynamic_anchor_width or 4),
-                    drop_residual=True,
-                )
-            elif self.spec.dynamic_allocator in {"budget_dual", "budget_dual_frontier"}:
-                span = self._contiguous_chunk_span(chunk_slices)
-                if span is None:
-                    dual_micro_len = int(self.spec.dynamic_anchor_width or 8)
-                    dual_adaptive_split = False
-                else:
-                    base_start, base_end = span
-                    span_len = max(1, int(base_end) - int(base_start))
-                    max_victim_len = int(self.spec.dynamic_victim_max_len or max(int(self.chunk_size) * 5, 160))
-                    base_surrogate_slots = max(1, math.ceil(float(span_len) / float(max_victim_len)))
-                    budget_entries = max(1, int(effective_capacity_prompt) - int(sink_len) - int(recent_len))
-                    raw_room = max(0, budget_entries - base_surrogate_slots)
-                    # Use 4-token evidence atoms only when the budget can no
-                    # longer afford roughly two 8-token raw islands per coarse
-                    # victim span.  This is budget-pressure driven, not tied to
-                    # a named prune percentage.
-                    scarce_raw_islands = raw_room < (2 * int(self.spec.dynamic_anchor_width or 8) * base_surrogate_slots)
-                    dual_micro_len = 4 if scarce_raw_islands else int(self.spec.dynamic_anchor_width or 8)
-                    dual_adaptive_split = bool(scarce_raw_islands)
-                allocated = self._dynamic_budget_heap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    adaptive_split=dual_adaptive_split,
-                    micro_len=dual_micro_len,
-                    drop_residual=self.spec.dynamic_allocator == "budget_dual_frontier",
-                    residual_frontier_normalized=self.spec.dynamic_allocator == "budget_dual_frontier",
-                )
-            elif self.spec.dynamic_allocator in {"keep_sur_drop", "keep_sur_drop_joint"}:
-                allocated = self._dynamic_keep_sur_drop_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    joint_span_candidates=self.spec.dynamic_allocator == "keep_sur_drop_joint",
-                )
-            elif self.spec.dynamic_allocator == "keep_sur_drop_price":
-                allocated = self._dynamic_keep_sur_drop_packet_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "ks_cell":
-                allocated = self._dynamic_ks_cell_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "surrogate_kv":
+            if self.spec.dynamic_allocator == "surrogate_kv":
                 alloc_call_start = time.perf_counter()
                 allocated = self._dynamic_surrogate_kv_allocation(
                     token_scores=token_scores,
@@ -2160,744 +1863,27 @@ class SurKVCluster:
                         }
                     )
                     self._last_allocator_stats = stats
-            elif self.spec.dynamic_allocator == "surkv_layer_dynamic":
-                allocated = self._dynamic_ksr_dfx_allocation(
+            elif self.spec.dynamic_allocator == "projected_residual":
+                alloc_call_start = time.perf_counter()
+                allocated = self._projected_residual_allocation(
                     token_scores=token_scores,
                     chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
                     target_compressed_tokens=effective_capacity_prompt,
                     sink_len=sink_len,
                     recent_len=recent_len,
-                    merge_first=False,
-                    current_frontier_accept=False,
-                    admission_shadow_price=True,
-                    frontier_region_price=True,
-                    completion_order=False,
-                    bounded_market=True,
-                    budget_complete_peel=True,
                 )
+                record_update_timing("projected_residual_allocator_call", alloc_call_start)
                 if allocated is not None:
                     stats = dict(self._last_allocator_stats or {})
                     stats.update(
                         {
-                            "surkv_layer_dynamic_global_allocator": 1,
-                            "surrogate_kv_dfx_backend": 0,
-                            "surrogate_kv_bounded_frontier_market": 1,
+                            "surrogate_kv_primary_allocator": 1,
                             "surrogate_kv_posthoc_selector": 0,
                         }
                     )
                     self._last_allocator_stats = stats
-            elif self.spec.dynamic_allocator == "surrogate_kv_v2":
-                allocated = self._dynamic_ksr_dfx_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    merge_first=False,
-                    current_frontier_accept=False,
-                    admission_shadow_price=True,
-                    frontier_region_price=True,
-                    completion_order=False,
-                    bounded_market=True,
-                    reserve_coherent_price=True,
-                    budget_complete_peel=True,
-                )
-                if allocated is not None:
-                    stats = dict(self._last_allocator_stats or {})
-                    stats.update(
-                        {
-                            "surrogate_kv_dfx_backend": 0,
-                            "surrogate_kv_bounded_frontier_market": 1,
-                            "surrogate_kv_posthoc_selector": 0,
-                            "surrogate_kv_v2_reserve_coherent_price": 1,
-                        }
-                    )
-                    self._last_allocator_stats = stats
-            elif self.spec.dynamic_allocator == "surrogate_kv_v3":
-                allocated = self._dynamic_surrogate_kv_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    predictive=True,
-                )
-            elif self.spec.dynamic_allocator in {
-                "ks_run",
-                "ks_run_coarse",
-                "ks_run_merge",
-                "ks_run_merge_exact",
-                "ks_run_merge_lazy",
-                "ks_run_merge_plus",
-                "ks_run_merge_packet",
-                "ks_run_merge_repair",
-                "ks_run_merge_ledger",
-                "ks_run_merge_price",
-                "ks_run_merge_select",
-                "ks_run_merge_terminal",
-                "ks_run_dom",
-                "ks_run_dfx",
-                "ks_run_dfx4",
-                "ks_run_dfx_merge",
-                "ks_run_strict",
-                "ks_run_layout",
-            }:
-                allocator = self.spec.dynamic_allocator
-                ksr_merge_reference = self.spec.mode == "dynamic_ks_run_merge"
-
-                def run_ks_allocator(
-                    *,
-                    strict_k_deficit: bool = False,
-                    layout_coarsen: bool = False,
-                    coarse_merge_credit: bool = False,
-                    legacy_merge_pricing: bool = False,
-                    merge_budget_credit: bool = False,
-                    merge_exact_budget: bool = False,
-                    merge_lazy_ledger: bool = False,
-                    merge_completion_objective: bool = False,
-                    merge_frontier_fill: bool = False,
-                    merge_candidate_peel: bool = False,
-                    merge_budget_repair: bool = False,
-                    merge_buyback_ledger: bool = False,
-                    merge_aggressive_stack: bool = False,
-                    merge_terminal_price: bool = False,
-                    fast_static_merge_metrics: bool = False,
-                    merge_terminal_after_state: bool = True,
-                ):
-                    result = self._dynamic_ks_run_allocation(
-                        token_scores=token_scores,
-                        chunk_slices=chunk_slices,
-                        chunk_lengths=chunk_lengths,
-                        target_compressed_tokens=effective_capacity_prompt,
-                        sink_len=sink_len,
-                        recent_len=recent_len,
-                        strict_k_deficit=bool(strict_k_deficit),
-                        layout_coarsen=bool(layout_coarsen),
-                        coarse_merge_credit=bool(coarse_merge_credit),
-                        legacy_merge_pricing=bool(legacy_merge_pricing),
-                        merge_budget_credit=bool(merge_budget_credit),
-                        merge_exact_budget=bool(merge_exact_budget),
-                        merge_lazy_ledger=bool(merge_lazy_ledger),
-                        merge_completion_objective=bool(merge_completion_objective),
-                        merge_frontier_fill=bool(merge_frontier_fill),
-                        merge_candidate_peel=bool(merge_candidate_peel),
-                        merge_budget_repair=bool(merge_budget_repair),
-                        merge_buyback_ledger=bool(merge_buyback_ledger),
-                        merge_aggressive_stack=bool(merge_aggressive_stack),
-                        merge_terminal_price=bool(merge_terminal_price),
-                        fast_static_merge_metrics=bool(fast_static_merge_metrics),
-                        merge_terminal_after_state=bool(merge_terminal_after_state),
-                    )
-                    return result, dict(self._last_allocator_stats or {})
-
-                def merge_reference_score(stats: Dict[str, float]) -> float:
-                    selected_value = float(stats.get("ks_run_selected_value", 0.0) or 0.0)
-                    sold_deficit = float(stats.get("ks_run_sold_k_deficit_value", 0.0) or 0.0)
-                    buyback_value = float(stats.get("ks_run_buyback_raw_value", 0.0) or 0.0)
-                    raw_slot_price = max(0.0, float(stats.get("ks_run_raw_slot_price", 0.0) or 0.0))
-                    budget_gap = max(0.0, float(stats.get("ks_run_budget_gap", 0.0) or 0.0))
-                    region_open_cost = max(0.0, float(stats.get("ks_run_region_open_cost", 0.0) or 0.0))
-                    surrogate_regions = max(0.0, float(stats.get("ks_run_surrogate_regions", 0.0) or 0.0))
-                    pressure = raw_slot_price / (1.0 + raw_slot_price)
-                    return (
-                        float(selected_value)
-                        - float(sold_deficit)
-                        + float(buyback_value)
-                        - float(raw_slot_price) * float(budget_gap)
-                        - float(pressure) * float(region_open_cost) * float(surrogate_regions)
-                    )
-
-                if bool(ksr_merge_reference):
-                    # Restore the 2026-05-07 16:42 good KSRMerge path:
-                    # dynamic_ks_run_merge is the original legacy merge allocator,
-                    # not Exact/Repair/Lazy/Ledger/Selector/Coarse.
-                    allocated, _allocated_stats = run_ks_allocator(
-                        strict_k_deficit=False,
-                        layout_coarsen=False,
-                        coarse_merge_credit=False,
-                        legacy_merge_pricing=True,
-                        merge_budget_credit=False,
-                        merge_exact_budget=False,
-                        merge_lazy_ledger=False,
-                        merge_completion_objective=False,
-                        merge_frontier_fill=True,
-                        merge_candidate_peel=False,
-                        merge_budget_repair=False,
-                        merge_buyback_ledger=False,
-                        merge_aggressive_stack=False,
-                    )
-                elif allocator == "ks_run_dom":
-                    allocated = self._dynamic_ks_run_merge_original_allocation(
-                        token_scores=token_scores,
-                        chunk_slices=chunk_slices,
-                        chunk_lengths=chunk_lengths,
-                        target_compressed_tokens=effective_capacity_prompt,
-                        sink_len=sink_len,
-                        recent_len=recent_len,
-                        dominance_pricing=True,
-                    )
-                elif allocator in {"ks_run_dfx", "ks_run_dfx4", "ks_run_dfx_merge"}:
-                    allocated = self._dynamic_ksr_dfx_allocation(
-                        token_scores=token_scores,
-                        chunk_slices=chunk_slices,
-                        chunk_lengths=chunk_lengths,
-                        target_compressed_tokens=effective_capacity_prompt,
-                        sink_len=sink_len,
-                        recent_len=recent_len,
-                        merge_first=allocator == "ks_run_dfx_merge",
-                        current_frontier_accept=False,
-                        admission_shadow_price=allocator == "ks_run_dfx4",
-                    )
-                elif allocator == "ks_run_merge_select":
-                    base_allocated, base_stats = run_ks_allocator()
-                    merge_allocated, merge_stats = run_ks_allocator(
-                        legacy_merge_pricing=True,
-                        merge_frontier_fill=True,
-                    )
-                    base_score = merge_reference_score(base_stats)
-                    merge_score = merge_reference_score(merge_stats)
-                    tail_price_scale = max(
-                        0.0,
-                        float(
-                            merge_stats.get(
-                                "ks_run_tail_price_scale",
-                                base_stats.get("ks_run_tail_price_scale", 0.0),
-                            )
-                            or 0.0
-                        ),
-                    )
-                    budget_entries = max(0.0, float(merge_stats.get("ks_run_budget_entries", 0.0) or 0.0))
-                    full_cost = max(1.0, float(merge_stats.get("ks_run_full_cost", 1.0) or 1.0))
-                    budget_fraction = float(budget_entries) / float(full_cost)
-                    extreme_raw_pressure = bool(
-                        tail_price_scale > 1.0 and float(budget_fraction) <= 1.0 / float(tail_price_scale)
-                    )
-                    merge_sells_more_raw = float(merge_stats.get("ks_run_sold_raw_atoms", 0.0) or 0.0) > float(
-                        base_stats.get("ks_run_sold_raw_atoms", 0.0) or 0.0
-                    )
-                    merge_leaves_larger_gap = float(merge_stats.get("ks_run_budget_gap", 0.0) or 0.0) > float(
-                        base_stats.get("ks_run_budget_gap", 0.0) or 0.0
-                    )
-                    extreme_raw_fallback = bool(
-                        extreme_raw_pressure and merge_sells_more_raw and merge_leaves_larger_gap
-                    )
-                    choose_base = bool(
-                        base_allocated is not None
-                        and (
-                            merge_allocated is None
-                            or extreme_raw_fallback
-                            or float(base_score) >= float(merge_score)
-                        )
-                    )
-                    allocated = base_allocated if choose_base else merge_allocated
-                    selected_stats = dict(base_stats if choose_base else merge_stats)
-                    selected_stats.update(
-                        {
-                            "ks_run_merge_selector_enabled": 1,
-                            "ks_run_merge_selector_chose_base": int(bool(choose_base)),
-                            "ks_run_merge_selector_extreme_raw_fallback": int(bool(extreme_raw_fallback)),
-                            "ks_run_merge_selector_base_score": float(base_score),
-                            "ks_run_merge_selector_merge_score": float(merge_score),
-                            "ks_run_merge_selector_tail_price_scale": float(tail_price_scale),
-                            "ks_run_merge_selector_budget_fraction": float(budget_fraction),
-                            "ks_run_merge_selector_base_raw_tokens": float(
-                                base_stats.get("ks_run_raw_tokens", 0.0) or 0.0
-                            ),
-                            "ks_run_merge_selector_merge_raw_tokens": float(
-                                merge_stats.get("ks_run_raw_tokens", 0.0) or 0.0
-                            ),
-                            "ks_run_merge_selector_base_surrogate_tokens": float(
-                                base_stats.get("ks_run_surrogate_tokens", 0.0) or 0.0
-                            ),
-                            "ks_run_merge_selector_merge_surrogate_tokens": float(
-                                merge_stats.get("ks_run_surrogate_tokens", 0.0) or 0.0
-                            ),
-                            "ks_run_merge_selector_base_budget_gap": float(
-                                base_stats.get("ks_run_budget_gap", 0.0) or 0.0
-                            ),
-                            "ks_run_merge_selector_merge_budget_gap": float(
-                                merge_stats.get("ks_run_budget_gap", 0.0) or 0.0
-                            ),
-                        }
-                    )
-                    self._last_allocator_stats = selected_stats
-                elif allocator == "ks_run_merge_terminal":
-                    allocated, _allocated_stats = run_ks_allocator(
-                        strict_k_deficit=False,
-                        layout_coarsen=False,
-                        coarse_merge_credit=False,
-                        legacy_merge_pricing=True,
-                        merge_budget_credit=False,
-                        merge_exact_budget=False,
-                        merge_lazy_ledger=False,
-                        merge_completion_objective=False,
-                        merge_frontier_fill=True,
-                        merge_candidate_peel=False,
-                        merge_budget_repair=False,
-                        merge_buyback_ledger=False,
-                        merge_aggressive_stack=False,
-                        merge_terminal_price=True,
-                        fast_static_merge_metrics=True,
-                        merge_terminal_after_state=True,
-                    )
-                else:
-                    allocated, _allocated_stats = run_ks_allocator(
-                        strict_k_deficit=allocator == "ks_run_strict",
-                        layout_coarsen=allocator == "ks_run_layout",
-                        coarse_merge_credit=allocator == "ks_run_coarse",
-                        legacy_merge_pricing=allocator == "ks_run_merge",
-                        merge_budget_credit=allocator in {
-                            "ks_run_merge",
-                            "ks_run_merge_exact",
-                            "ks_run_merge_lazy",
-                            "ks_run_merge_plus",
-                            "ks_run_merge_packet",
-                            "ks_run_merge_repair",
-                        },
-                        merge_exact_budget=allocator == "ks_run_merge_exact",
-                        merge_lazy_ledger=allocator == "ks_run_merge_lazy",
-                        merge_completion_objective=False,
-                        merge_frontier_fill=allocator in {
-                            "ks_run_merge",
-                            "ks_run_merge_plus",
-                            "ks_run_merge_price",
-                        },
-                        merge_candidate_peel=allocator == "ks_run_merge_packet",
-                        merge_budget_repair=allocator == "ks_run_merge_repair",
-                        merge_buyback_ledger=allocator in {
-                            "ks_run_merge_ledger",
-                            "ks_run_merge_lazy",
-                            "ks_run_merge_price",
-                        },
-                        merge_aggressive_stack=allocator == "ks_run_merge_price",
-                    )
-            elif self.spec.dynamic_allocator == "budget_multires":
-                allocated = self._dynamic_budget_multires_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "budget_adaptive":
-                allocated = self._dynamic_budget_heap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    adaptive_split=True,
-                    micro_len=int(self.spec.dynamic_anchor_width or 8),
-                )
-            elif self.spec.dynamic_allocator == "budget_sharp":
-                allocated = self._dynamic_budget_heap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    adaptive_split=True,
-                    micro_len=int(self.spec.dynamic_anchor_width or 4),
-                )
-            elif self.spec.dynamic_allocator == "budget_refine":
-                allocated = self._dynamic_budget_refine_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "budget_swap":
-                allocated = self._dynamic_budget_swap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_cost":
-                allocated = self._dynamic_evidence_waterline_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator in {
-                "evidence_complement",
-                "evidence_complement_fullraw",
-                "evidence_complement_peakraw",
-            }:
-                allocated = self._dynamic_evidence_complement_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_marginal":
-                allocated = self._dynamic_evidence_marginal_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_mass":
-                allocated = self._dynamic_evidence_mass_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_prune":
-                allocated = self._dynamic_evidence_prune_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_prune_rescue":
-                allocated = self._dynamic_evidence_prune_rescue_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_prune_rescue_value":
-                allocated = self._dynamic_evidence_prune_rescue_value_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "residual_rd":
-                allocated = self._dynamic_residual_rd_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_prune_rescue_slack":
-                allocated = self._dynamic_evidence_prune_rescue_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    allow_raw_swap=False,
-                )
-            elif self.spec.dynamic_allocator == "evidence_tiered":
-                allocated = self._dynamic_evidence_tiered_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_topdown_tier":
-                allocated = self._dynamic_evidence_topdown_tier_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "segment_rd":
-                allocated = self._dynamic_segment_rd_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    chunk_mean_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "segment_resolution":
-                allocated = self._dynamic_segment_resolution_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_region_rescue":
-                allocated = self._dynamic_evidence_region_rescue_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "unified_rd":
-                allocated = self._dynamic_unified_rd_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "tri_rd":
-                allocated = self._dynamic_tri_rd_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "energy_rd":
-                allocated = self._dynamic_energy_rd_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "frontier_exchange":
-                allocated = self._dynamic_frontier_exchange_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "frontier_coherent_exchange":
-                allocated = self._dynamic_frontier_coherent_exchange_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "certified_projection":
-                allocated = self._dynamic_certified_projection_allocation(
-                    token_scores=token_scores,
-                    value_states=value_states,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_resource":
-                allocated = self._dynamic_evidence_resource_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_resource_drop":
-                allocated = self._dynamic_evidence_resource_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    drop_residual=True,
-                )
-            elif self.spec.dynamic_allocator == "evidence_resource_sharp":
-                allocated = self._dynamic_evidence_resource_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    neighbor_risk=False,
-                )
-            elif self.spec.dynamic_allocator == "evidence_price_frontier":
-                allocated = self._dynamic_evidence_price_frontier_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_exchange":
-                allocated = self._dynamic_evidence_exchange_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_region_raw":
-                allocated = self._dynamic_evidence_region_raw_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_region_frontier":
-                allocated = self._dynamic_evidence_region_frontier_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_mars":
-                allocated = self._dynamic_evidence_mars_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_tri":
-                allocated = self._dynamic_evidence_tri_action_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "evidence_cost_bounded":
-                allocated = self._dynamic_budget_heap_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    adaptive_split=False,
-                    micro_len=int(self.spec.dynamic_anchor_width or 8),
-                    evidence_cost=True,
-                )
-            elif self.spec.dynamic_allocator in {"budget_frontier", "budget_frontier_free"}:
-                allocated = self._dynamic_budget_frontier_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    free_merge=self.spec.dynamic_allocator == "budget_frontier_free",
-                )
-            elif self.spec.dynamic_allocator == "boms":
-                allocated = self._dynamic_boms_allocation(
-                    token_scores=token_scores,
-                    key_states=key_states,
-                    value_states=value_states,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    micro_len=int(self.spec.dynamic_anchor_width or 4),
-                )
-            elif self.spec.dynamic_allocator == "raw_atom":
-                allocated = self._dynamic_raw_atom_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    micro_len=int(self.spec.dynamic_anchor_width or 8),
-                )
-            elif self.spec.dynamic_allocator == "cascade_viterbi":
-                allocated = self._dynamic_cascade_viterbi_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "split_frontier":
-                allocated = self._dynamic_split_frontier_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                    micro_len=int(self.spec.dynamic_anchor_width or 4),
-                )
-            elif self.spec.dynamic_allocator == "importance_distortion":
-                allocated = self._dynamic_importance_distortion_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "merge_market":
-                allocated = self._dynamic_merge_market_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "hybrid_anchor":
-                allocated = self._dynamic_hybrid_anchor_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    chunk_mean_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
-            elif self.spec.dynamic_allocator == "rate_distortion":
-                allocated = self._dynamic_rate_distortion_allocation(
-                    token_scores=token_scores,
-                    chunk_slices=chunk_slices,
-                    chunk_lengths=chunk_lengths,
-                    chunk_mean_scores=chunk_mean_scores,
-                    chunk_max_scores=chunk_max_scores,
-                    chunk_score_distortion=chunk_score_distortion,
-                    target_compressed_tokens=effective_capacity_prompt,
-                    sink_len=sink_len,
-                    recent_len=recent_len,
-                )
+            else:
+                raise ValueError(f"Unsupported SurrogateKV allocator: {self.spec.dynamic_allocator}")
             if allocated is not None:
                 post_alloc_start = time.perf_counter()
                 (
@@ -2948,10 +1934,7 @@ class SurKVCluster:
         should_budget_fill_dynamic = (
             self.spec.dynamic_regioning
             and self.spec.direct_strategy == "local"
-            and (
-                not dynamic_rate_distortion_allocated
-                or self.spec.dynamic_allocator in {"micro_first", "legacy"}
-            )
+            and not dynamic_rate_distortion_allocated
         )
         if should_budget_fill_dynamic and replace_mask.any():
             budget_fill_start = time.perf_counter()
@@ -3082,7 +2065,7 @@ class SurKVCluster:
 
         if self.spec.direct_strategy == "local":
             if chunk_proto_key_bank is None or chunk_proto_value_bank is None:
-                if self.spec.dynamic_regioning and self.spec.dynamic_allocator != "segment_rd":
+                if self.spec.dynamic_regioning:
                     prototype_call_start = time.perf_counter()
                     (
                         chunk_proto_key_bank,
@@ -3643,6 +2626,804 @@ class SurKVCluster:
         )
         return compressed_key, compressed_value, batch_mode_counts, two_surrogate_chunks, selected_runs, batch_layout_meta, batch_weight_stats
 
+    def _headwise_norm_rms_prototypes_from_spans_batch(
+        self,
+        *,
+        key_states,
+        value_states,
+        head_scores=None,
+        head_spans: Sequence[Sequence[Tuple[int, int]]],
+        base_start: int,
+        base_end: int,
+        micro_len: int,
+    ):
+        head_dim = int(key_states.shape[-1])
+        key_heads = int(key_states.shape[1])
+        empty_key = key_states.new_empty((1, 1, 0, head_dim))
+        empty_value = value_states.new_empty((1, 1, 0, head_dim))
+        if not head_spans:
+            return []
+        if all(not spans for spans in head_spans):
+            return [(empty_key, empty_value) for _ in head_spans]
+
+        base_start = int(base_start)
+        base_end = int(base_end)
+        micro_len = max(1, int(micro_len))
+        span_len = max(0, int(base_end) - int(base_start))
+        if span_len <= 0:
+            return [(empty_key, empty_value) for _ in head_spans]
+
+        proto_mode = str(
+            os.environ.get("SURKV_HEADWISE_SURROGATE_PROTO", "peak")
+            or "peak"
+        ).strip().lower()
+        if (
+            proto_mode in {"peak", "token", "representative", "rep"}
+            and isinstance(head_scores, torch.Tensor)
+            and head_scores.ndim == 2
+            and int(head_scores.shape[0]) >= int(key_heads)
+            and int(head_scores.shape[1]) >= int(base_end)
+        ):
+            outputs = [(empty_key, empty_value) for _ in head_spans]
+            score_source = head_scores.detach().to(device=key_states.device, dtype=torch.float32)
+            flat_heads = []
+            starts = []
+            ends = []
+            counts = [0 for _ in head_spans]
+            max_width = 1
+            for head_idx, spans in enumerate(head_spans):
+                if not spans:
+                    continue
+                for start, end in spans:
+                    start_i = max(int(base_start), min(int(base_end), int(start)))
+                    end_i = max(start_i + 1, min(int(base_end), int(end)))
+                    flat_heads.append(int(head_idx))
+                    starts.append(int(start_i))
+                    ends.append(int(end_i))
+                    counts[int(head_idx)] += 1
+                    max_width = max(int(max_width), int(end_i) - int(start_i))
+            if not starts:
+                return outputs
+            heads_t = torch.as_tensor(flat_heads, device=key_states.device, dtype=torch.long)
+            starts_t = torch.as_tensor(starts, device=key_states.device, dtype=torch.long)
+            ends_t = torch.as_tensor(ends, device=key_states.device, dtype=torch.long)
+            widths_t = (ends_t - starts_t).clamp_min(1)
+            offsets = torch.arange(int(max_width), device=key_states.device, dtype=torch.long)
+            gather_indices = starts_t.view(-1, 1) + offsets.view(1, -1)
+            valid = offsets.view(1, -1) < widths_t.view(-1, 1)
+            safe_indices = gather_indices.clamp(max=int(base_end) - 1)
+            local_scores = score_source[heads_t.view(-1, 1), safe_indices]
+            local_scores = local_scores.masked_fill(~valid, torch.finfo(local_scores.dtype).min)
+            index_t = starts_t + local_scores.argmax(dim=-1).to(dtype=torch.long)
+            proto_key_flat = key_states[0, heads_t, index_t, :]
+            proto_value_flat = value_states[0, heads_t, index_t, :]
+            cursor = 0
+            for head_idx, count in enumerate(counts):
+                count = int(count)
+                if count <= 0:
+                    continue
+                next_cursor = int(cursor) + int(count)
+                outputs[int(head_idx)] = (
+                    proto_key_flat[int(cursor) : int(next_cursor)].reshape(1, 1, int(count), head_dim),
+                    proto_value_flat[int(cursor) : int(next_cursor)].reshape(1, 1, int(count), head_dim),
+                )
+                cursor = int(next_cursor)
+            return outputs
+
+        regular_micro = int(span_len) // int(micro_len)
+        regular_tokens = int(regular_micro) * int(micro_len)
+        micro_keys = []
+        micro_values = []
+        micro_lengths = []
+        if regular_micro > 0:
+            key_regular = key_states[:, :, int(base_start) : int(base_start) + int(regular_tokens), :].reshape(
+                1,
+                int(key_heads),
+                int(regular_micro),
+                int(micro_len),
+                head_dim,
+            )
+            value_regular = value_states[:, :, int(base_start) : int(base_start) + int(regular_tokens), :].reshape(
+                1,
+                int(key_heads),
+                int(regular_micro),
+                int(micro_len),
+                head_dim,
+            )
+            micro_keys.append(key_regular.mean(dim=3))
+            micro_values.append(value_regular.mean(dim=3))
+            micro_lengths.append(
+                torch.full(
+                    (int(regular_micro),),
+                    int(micro_len),
+                    device=key_states.device,
+                    dtype=torch.float32,
+                )
+            )
+        tail_len = int(span_len) - int(regular_tokens)
+        if tail_len > 0:
+            tail_start = int(base_start) + int(regular_tokens)
+            micro_keys.append(key_states[:, :, int(tail_start) : int(base_end), :].mean(dim=2, keepdim=True))
+            micro_values.append(value_states[:, :, int(tail_start) : int(base_end), :].mean(dim=2, keepdim=True))
+            micro_lengths.append(torch.full((1,), int(tail_len), device=key_states.device, dtype=torch.float32))
+        if not micro_keys:
+            return [(empty_key, empty_value) for _ in head_spans]
+
+        micro_key_bank = torch.cat(micro_keys, dim=2).to(dtype=torch.float32)
+        micro_value_bank = torch.cat(micro_values, dim=2).to(dtype=torch.float32)
+        micro_len_bank = torch.cat(micro_lengths, dim=0).to(dtype=torch.float32)
+        max_micro_idx = int(micro_key_bank.shape[2])
+
+        weights = micro_len_bank.view(1, 1, -1, 1)
+        weighted_keys = micro_key_bank * weights
+        weighted_values = micro_value_bank * weights
+        zero_key = weighted_keys.new_zeros((1, int(key_heads), 1, head_dim))
+        zero_value = weighted_values.new_zeros((1, int(key_heads), 1, head_dim))
+        key_prefix = torch.cat([zero_key, weighted_keys.cumsum(dim=2)], dim=2)
+        value_prefix = torch.cat([zero_value, weighted_values.cumsum(dim=2)], dim=2)
+        length_prefix = torch.cat([micro_len_bank.new_zeros((1,)), micro_len_bank.cumsum(dim=0)], dim=0)
+
+        key_norm_prefix = None
+        if self.spec.surrogate_mode in _NORM_RESTORED_KEY_MODES:
+            micro_key_norm = micro_key_bank.norm(dim=-1)
+            weighted_key_norm = micro_key_norm * micro_len_bank.view(1, 1, -1)
+            zero_norm = weighted_key_norm.new_zeros((1, int(key_heads), 1))
+            key_norm_prefix = torch.cat([zero_norm, weighted_key_norm.cumsum(dim=2)], dim=2)
+
+        value_norm_prefix = None
+        if self.spec.surrogate_mode in _RMS_RESTORED_VALUE_MODES:
+            micro_value_norm = micro_value_bank.norm(dim=-1)
+            weighted_value_norm = micro_value_norm * micro_len_bank.view(1, 1, -1)
+            zero_norm = weighted_value_norm.new_zeros((1, int(key_heads), 1))
+            value_norm_prefix = torch.cat([zero_norm, weighted_value_norm.cumsum(dim=2)], dim=2)
+
+        outputs = []
+        for head_idx, spans in enumerate(head_spans):
+            if not spans:
+                outputs.append((empty_key, empty_value))
+                continue
+            starts = []
+            ends = []
+            for start, end in spans:
+                start_i = max(int(base_start), min(int(base_end), int(start)))
+                end_i = max(start_i, min(int(base_end), int(end)))
+                start_micro = max(0, min(max_micro_idx, (start_i - int(base_start)) // int(micro_len)))
+                end_micro = int(math.ceil(float(end_i - int(base_start)) / float(micro_len)))
+                end_micro = max(start_micro + 1, min(max_micro_idx, int(end_micro)))
+                starts.append(int(start_micro))
+                ends.append(int(end_micro))
+            starts_t = torch.as_tensor(starts, device=key_states.device, dtype=torch.long)
+            ends_t = torch.as_tensor(ends, device=key_states.device, dtype=torch.long)
+            denom = (length_prefix.index_select(0, ends_t) - length_prefix.index_select(0, starts_t)).clamp_min(1e-6)
+
+            head_key_prefix = key_prefix[:, int(head_idx) : int(head_idx) + 1]
+            head_value_prefix = value_prefix[:, int(head_idx) : int(head_idx) + 1]
+            proto_key = (
+                head_key_prefix.index_select(2, ends_t) - head_key_prefix.index_select(2, starts_t)
+            ) / denom.view(1, 1, -1, 1)
+            proto_value = (
+                head_value_prefix.index_select(2, ends_t) - head_value_prefix.index_select(2, starts_t)
+            ) / denom.view(1, 1, -1, 1)
+
+            if key_norm_prefix is not None:
+                head_key_norm_prefix = key_norm_prefix[:, int(head_idx) : int(head_idx) + 1]
+                target_key_norm = (
+                    head_key_norm_prefix.index_select(2, ends_t)
+                    - head_key_norm_prefix.index_select(2, starts_t)
+                ) / denom.view(1, 1, -1)
+                current_key_norm = proto_key.norm(dim=-1).clamp_min(1e-6)
+                key_scale = _safe_key_norm_scale(
+                    target_norm=target_key_norm,
+                    current_norm=current_key_norm,
+                )
+                proto_key = proto_key * key_scale.view(1, 1, -1, 1)
+
+            if value_norm_prefix is not None:
+                head_value_norm_prefix = value_norm_prefix[:, int(head_idx) : int(head_idx) + 1]
+                target_value_norm = (
+                    head_value_norm_prefix.index_select(2, ends_t)
+                    - head_value_norm_prefix.index_select(2, starts_t)
+                ) / denom.view(1, 1, -1)
+                current_value_norm = proto_value.norm(dim=-1).clamp_min(1e-6)
+                proto_value = proto_value * (target_value_norm / current_value_norm).view(1, 1, -1, 1)
+
+            outputs.append((proto_key.to(dtype=key_states.dtype), proto_value.to(dtype=value_states.dtype)))
+        return outputs
+
+
+    def update_kv_headwise(self, key_states, query_states, value_states, attention_mask=None, num_key_value_groups=1):
+        update_start = time.perf_counter()
+        del attention_mask
+        if key_states.shape[-2] != query_states.shape[-2]:
+            raise ValueError("SurKV headwise path requires key/query sequence lengths to match.")
+
+        bsz, query_heads, q_len, head_dim = query_states.shape
+        key_heads = int(key_states.shape[1])
+        if int(bsz) != 1:
+            raise ValueError("SurKV headwise Ada cache path currently supports batch size 1.")
+        if int(query_heads) % max(1, int(key_heads)) != 0:
+            raise ValueError(
+                f"query heads ({query_heads}) must be divisible by key/value heads ({key_heads}) "
+                "for headwise Ada packing."
+            )
+
+        groups = max(1, int(num_key_value_groups or (int(query_heads) // max(1, int(key_heads)))))
+        configured_keep_ratio = min(1.0, float(self.max_capacity_prompt) / max(float(q_len), 1.0))
+        if self.layer_keep_ratio is not None:
+            configured_keep_ratio = min(1.0, max(1.0 / max(q_len, 1), float(self.layer_keep_ratio)))
+        effective_capacity_prompt = max(1, min(int(q_len), int(round(float(q_len) * configured_keep_ratio))))
+        recent_len = min(int(self.window_size), int(q_len))
+        past_len = int(q_len) - int(recent_len)
+        self.last_layout_meta = None
+        self._last_allocator_stats = {}
+        self._last_score_stats = {}
+        self._last_ada_head_capacities = None
+        self._last_fast_pack_plan = None
+        self._pending_global_budget_ledger_stats = {}
+        self._last_layer_budget_signal = 0.0
+        self._last_layer_budget_curve = None
+        self._headwise_cache_query_repeated = False
+
+        def finish_uncompressed():
+            lens = [int(q_len)] * int(key_states.shape[1])
+            self._init_headwise_flatten_metadata(
+                head_lens=lens,
+                device=key_states.device,
+                key_heads=int(key_states.shape[1]),
+                query_heads=int(query_states.shape[1]),
+                num_key_value_groups=1 if bool(getattr(self, "_headwise_cache_query_repeated", False)) else groups,
+            )
+            flat_key = key_states.reshape(-1, head_dim)
+            flat_value = value_states.reshape(-1, head_dim)
+            self._last_allocator_stats.update(
+                {
+                    "surrogate_kv_headwise_varlen": 1,
+                    "surrogate_kv_headwise_uncompressed": 1,
+                    "surrogate_kv_headwise_flatten_tokens": int(flat_key.shape[0]),
+                    "surrogate_kv_headwise_exact_query_heads": int(getattr(self, "_headwise_cache_query_repeated", False)),
+                    "surrogate_kv_headwise_head_len_min": int(q_len),
+                    "surrogate_kv_headwise_head_len_max": int(q_len),
+                    "surrogate_kv_headwise_head_len_mean": float(q_len),
+                }
+            )
+            self.last_stats = self._stats(
+                full_tokens=int(q_len),
+                compressed_tokens=int(q_len),
+                recent_tokens=int(recent_len),
+                selected_chunks=0,
+                selected_runs=0,
+                num_chunks=0,
+                chunk_size=0,
+                sink_tokens=0,
+                two_surrogate_chunks=0,
+                mode_counts={},
+                op_seconds=time.perf_counter() - update_start,
+                configured_keep_ratio=configured_keep_ratio,
+            )
+            return flat_key, flat_value
+
+        if int(q_len) <= int(effective_capacity_prompt) or int(recent_len) <= 0 or int(past_len) <= 0:
+            if self._ada_exact_query_head_cache_enabled() and int(groups) > 1:
+                key_states = _repeat_kv_heads(key_states, int(groups))
+                value_states = _repeat_kv_heads(value_states, int(groups))
+                self._headwise_cache_query_repeated = True
+            return finish_uncompressed()
+
+        sink_len = min(self._protected_sink_tokens(), int(past_len))
+        score_start = time.perf_counter()
+        _ = self._past_token_scores(
+            key_states=key_states,
+            query_states=query_states,
+            value_states=value_states,
+            recent_len=int(recent_len),
+            past_len=int(past_len),
+            head_dim=int(head_dim),
+            num_key_value_groups=int(groups),
+            base_capacity_prompt=int(effective_capacity_prompt),
+            sink_len=int(sink_len),
+            headwise_budget_only=True,
+        )
+        score_seconds = time.perf_counter() - score_start
+        precomputed_head_scores = getattr(self, "_last_headwise_precomputed_pooled_scores", None)
+        precomputed_residual_scores = getattr(self, "_last_surrogate_residual_head_token_scores", None)
+        precomputed_score_stats = dict(getattr(self, "_last_score_stats", {}) or {})
+        query_head_caps = getattr(self, "_last_ada_head_capacities", None)
+        base_budget = max(1, min(int(past_len), int(effective_capacity_prompt) - int(recent_len)))
+        if not isinstance(query_head_caps, torch.Tensor):
+            query_head_caps = torch.full(
+                (int(bsz), int(query_heads)),
+                int(base_budget),
+                device=key_states.device,
+                dtype=torch.long,
+            )
+        query_head_caps = query_head_caps.to(device=key_states.device, dtype=torch.long).clamp(min=1, max=int(past_len))
+        self._last_query_head_capacities = query_head_caps.detach()
+
+        original_key_heads = int(key_heads)
+        original_groups = int(groups)
+        exact_query_heads = bool(self._ada_exact_query_head_cache_enabled() and int(groups) > 1)
+        if exact_query_heads:
+            key_states = _repeat_kv_heads(key_states, int(groups))
+            value_states = _repeat_kv_heads(value_states, int(groups))
+            key_heads = int(query_heads)
+            groups = 1
+            key_head_caps = query_head_caps[0, : int(query_heads)]
+            gqa_capacity_fusion = "ada_exact_query_heads"
+            self._headwise_cache_query_repeated = True
+        elif int(query_heads) == int(key_heads):
+            key_head_caps = query_head_caps[0, : int(key_heads)]
+            gqa_capacity_fusion = "none"
+        else:
+            grouped_caps = query_head_caps[0, : int(key_heads) * int(groups)].view(int(key_heads), int(groups))
+            key_head_caps = torch.round(grouped_caps.to(dtype=torch.float32).mean(dim=-1)).to(dtype=torch.long)
+            gqa_capacity_fusion = "mean"
+
+        min_past_capacity = max(1, min(int(past_len), int(sink_len) + 1))
+        key_head_caps = key_head_caps.to(device=key_states.device, dtype=torch.long).clamp(
+            min=int(min_past_capacity),
+            max=int(past_len),
+        )
+        key_head_caps_cpu = [int(v) for v in key_head_caps.detach().to(device="cpu", dtype=torch.long).tolist()]
+        self._last_gqa_capacity_fusion = str(gqa_capacity_fusion)
+
+        # Ada/Pyramid/Dynamic/Snap must all use the same raw/surrogate/drop
+        # allocator.  The headwise path therefore treats each Ada head budget as
+        # a carrier cell and feeds it into update_kv(), instead of using a
+        # separate headwise-only allocator.
+
+        head_plans: List[Dict[str, object]] = []
+        head_lens: List[int] = []
+        child_mode_counts: List[Dict[str, int]] = []
+        child_selected_runs = []
+        child_surrogate_slots = []
+        child_chunks = []
+        child_numeric_sum: Dict[str, float] = {}
+        child_numeric_count: Dict[str, int] = {}
+        timing_breakdown = {"score": float(score_seconds), "planning": 0.0, "prototype": 0.0, "packing": 0.0}
+
+        def collect_child_numeric(name: str, value) -> None:
+            if value is None:
+                return
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return
+            child_numeric_sum[name] = child_numeric_sum.get(name, 0.0) + numeric_value
+            child_numeric_count[name] = child_numeric_count.get(name, 0) + 1
+
+        planning_start = time.perf_counter()
+        compressible_start = int(sink_len)
+        compressible_len = max(0, int(past_len) - int(compressible_start))
+        micro_len = max(1, int(self.spec.dynamic_anchor_width or (int(self.chunk_size) // 4)))
+        atom_count_for_stats = int(math.ceil(float(compressible_len) / float(micro_len))) if compressible_len > 0 else 0
+        shared_chunk_slices = [(int(compressible_start), int(past_len))] if int(compressible_len) > 0 else []
+        shared_chunk_lengths = torch.as_tensor(
+            [int(compressible_len)],
+            device=key_states.device,
+            dtype=torch.long,
+        )
+        score_bank_heads = int(key_heads) if bool(exact_query_heads) else int(query_heads)
+        score_bank = None
+        if (
+            isinstance(precomputed_head_scores, torch.Tensor)
+            and precomputed_head_scores.ndim == 3
+            and precomputed_head_scores.shape[0] == int(bsz)
+            and precomputed_head_scores.shape[1] >= int(score_bank_heads)
+            and precomputed_head_scores.shape[2] == int(past_len)
+        ):
+            score_bank = precomputed_head_scores[:, : int(score_bank_heads), : int(past_len)].detach()
+        residual_bank = None
+        if (
+            isinstance(precomputed_residual_scores, torch.Tensor)
+            and precomputed_residual_scores.ndim == 3
+            and precomputed_residual_scores.shape[0] == int(bsz)
+            and precomputed_residual_scores.shape[1] >= int(score_bank_heads)
+            and precomputed_residual_scores.shape[2] == int(past_len)
+        ):
+            residual_bank = precomputed_residual_scores[:, : int(score_bank_heads), : int(past_len)].detach()
+        plan_cluster = type(self)(
+            mode=self.mode,
+            window_size=self.window_size,
+            max_capacity_prompt=int(effective_capacity_prompt),
+            kernel_size=self.kernel_size,
+            pooling=self.pooling,
+            chunk_size=self.chunk_size,
+            local_radius=self.local_radius,
+            sink_tokens=self.sink_tokens,
+            layer_keep_ratio=None,
+            layer_scheduler=self.layer_scheduler,
+            global_budget_ledger=False,
+            global_layer_allocator=False,
+            score_method=self.score_method,
+            head_score_fusion="mean",
+        )
+        plan_cluster.generation_horizon = int(getattr(self, "generation_horizon", 0) or 0)
+        plan_cluster._precomputed_score_stats = dict(precomputed_score_stats)
+        plan_cluster._allocator_plan_only = True
+        allocator_setup = None
+        score_method_key = str(getattr(self, "score_method", "attention") or "attention").replace("-", "_").lower()
+        if (
+            bool(exact_query_heads)
+            and score_method_key not in {"andpro", "anchor_projection", "projection", "proj"}
+            and isinstance(score_bank, torch.Tensor)
+            and score_bank.shape[1] >= int(key_heads)
+            and int(compressible_len) > 0
+        ):
+            setup_scores = score_bank[0, : int(key_heads), int(compressible_start) : int(past_len)].to(
+                device=key_states.device,
+                dtype=torch.float32,
+            )
+            regular_atoms = int(int(compressible_len) // int(micro_len))
+            regular_tokens = int(regular_atoms) * int(micro_len)
+            mean_parts = []
+            peak_parts = []
+            if int(regular_atoms) > 0:
+                regular = setup_scores[:, : int(regular_tokens)].reshape(
+                    int(key_heads),
+                    int(regular_atoms),
+                    int(micro_len),
+                )
+                mean_parts.append(regular.mean(dim=2))
+                peak_parts.append(regular.max(dim=2).values)
+            if int(regular_tokens) < int(compressible_len):
+                tail = setup_scores[:, int(regular_tokens) :]
+                mean_parts.append(tail.mean(dim=1, keepdim=True))
+                peak_parts.append(tail.max(dim=1, keepdim=True).values)
+            if mean_parts:
+                atom_mean_all = torch.cat(mean_parts, dim=1)
+                atom_peak_all = torch.cat(peak_parts, dim=1)
+                mean_rank_all = _rank01(atom_mean_all)
+                peak_rank_all = _rank01(atom_peak_all)
+                atom_risk_all = torch.maximum(mean_rank_all, peak_rank_all)
+                risk_arrays = (
+                    torch.stack((mean_rank_all, atom_risk_all), dim=0)
+                    .detach()
+                    .to(device="cpu", dtype=torch.float64)
+                    .numpy()
+                )
+                tail_floor = 1.0 / float(max(2, int(atom_risk_all.shape[1]) + 1))
+
+                def setup_tail_scores(values: np.ndarray) -> np.ndarray:
+                    ranks = np.clip(np.asarray(values, dtype=np.float64), 0.0, 1.0)
+                    return -np.log(np.maximum(float(tail_floor), 1.0 - ranks))
+
+                mean_risk_all = risk_arrays[0] + 1e-6
+                atom_risk_np_all = risk_arrays[1] + 1e-6
+                future_risk_all = np.full_like(mean_risk_all, 1e-6)
+                allocator_setup = {
+                    "base_start": int(compressible_start),
+                    "base_end": int(past_len),
+                    "micro_len": int(micro_len),
+                    "num_atoms": int(atom_risk_np_all.shape[1]),
+                    "mean_risk": mean_risk_all,
+                    "future_risk": future_risk_all,
+                    "atom_risk": atom_risk_np_all,
+                    "mean_signal": setup_tail_scores(mean_risk_all),
+                    "future_signal": setup_tail_scores(future_risk_all),
+                    "atom_signal": setup_tail_scores(atom_risk_np_all),
+                    "surrogate_signal": setup_tail_scores(atom_risk_np_all),
+                    "andpro_guard": np.zeros_like(atom_risk_np_all),
+                }
+        plan_cluster._precomputed_allocator_setup = allocator_setup
+
+        for head_idx in range(int(key_heads)):
+            head_past_capacity = int(key_head_caps_cpu[int(head_idx)])
+            head_capacity_prompt = max(1, min(int(q_len), int(head_past_capacity) + int(recent_len)))
+            q_start = int(head_idx * groups)
+            q_end = int(q_start + groups)
+            head_token_scores = None
+            plan_cluster._last_surrogate_residual_token_scores = None
+            if isinstance(score_bank, torch.Tensor) and score_bank.shape[1] >= int(q_end):
+                grouped_head_scores = score_bank[:, int(q_start) : int(q_end), :]
+                if int(q_end) - int(q_start) > 1 and not bool(exact_query_heads):
+                    head_token_scores = torch.sqrt(
+                        torch.clamp(grouped_head_scores, min=0.0).square().mean(dim=1)
+                    ).detach()
+                else:
+                    head_token_scores = grouped_head_scores.mean(dim=1).detach()
+                if isinstance(residual_bank, torch.Tensor) and residual_bank.shape[1] >= int(q_end):
+                    grouped_residual_scores = residual_bank[:, int(q_start) : int(q_end), :]
+                    if int(q_end) - int(q_start) > 1 and not bool(exact_query_heads):
+                        plan_cluster._last_surrogate_residual_token_scores = torch.sqrt(
+                            torch.clamp(grouped_residual_scores, min=0.0).square().mean(dim=1)
+                        ).detach()
+                    else:
+                        plan_cluster._last_surrogate_residual_token_scores = grouped_residual_scores.mean(
+                            dim=1
+                        ).detach()
+
+            if head_token_scores is None:
+                local_score_start = time.perf_counter()
+                head_token_scores = plan_cluster._past_token_scores(
+                    key_states=key_states[:, int(head_idx) : int(head_idx) + 1, :, :],
+                    query_states=query_states[:, int(q_start) : int(q_end), :, :],
+                    value_states=value_states[:, int(head_idx) : int(head_idx) + 1, :, :],
+                    recent_len=int(recent_len),
+                    past_len=int(past_len),
+                    head_dim=int(head_dim),
+                    num_key_value_groups=int(groups),
+                    base_capacity_prompt=int(head_capacity_prompt),
+                    sink_len=int(sink_len),
+                )
+                timing_breakdown["score"] += float(time.perf_counter() - local_score_start)
+
+            raw_spans: List[Tuple[int, int]] = []
+            surrogate_spans: List[Tuple[int, int]] = []
+            chunk_count = 0
+            child_stats: Dict[str, object] = {}
+
+            if int(q_len) <= int(head_capacity_prompt) or int(compressible_len) <= 0:
+                raw_spans = [(int(sink_len), int(past_len))] if int(past_len) > int(sink_len) else []
+                head_len = int(q_len)
+                child_stats = {
+                    "ks_run_raw_tokens": int(max(0, int(past_len) - int(sink_len))),
+                    "ks_run_raw_regions": int(bool(raw_spans)),
+                    "ks_run_surrogate_regions": 0,
+                    "ks_run_surrogate_tokens": 0,
+                    "ks_run_drop_tokens": 0,
+                    "ks_run_drop_regions": 0,
+                    "ks_run_used_entries": int(max(0, int(past_len) - int(sink_len))) + int(sink_len),
+                    "ks_run_budget_gap": int(head_past_capacity) - int(past_len),
+                    "surrogate_kv_selected_surrogates": 0,
+                    "surrogate_kv_final_cost": int(past_len),
+                    "surrogate_kv_budget_gap": int(head_past_capacity) - int(past_len),
+                }
+            else:
+                budget_past_total = max(1, int(head_capacity_prompt) - int(recent_len))
+                budget_compressible = max(0, int(budget_past_total) - int(sink_len))
+                chunk_count = int(atom_count_for_stats)
+                if int(budget_compressible) >= int(compressible_len):
+                    raw_spans = [(int(sink_len), int(past_len))]
+                    head_len = int(q_len)
+                    child_stats = {
+                        "ks_run_raw_tokens": int(compressible_len),
+                        "ks_run_raw_regions": int(bool(raw_spans)),
+                        "ks_run_surrogate_regions": 0,
+                        "ks_run_surrogate_tokens": 0,
+                        "ks_run_drop_tokens": 0,
+                        "ks_run_drop_regions": 0,
+                        "ks_run_used_entries": int(compressible_len) + int(sink_len),
+                        "ks_run_budget_gap": int(head_past_capacity) - int(past_len),
+                        "surrogate_kv_selected_surrogates": 0,
+                        "surrogate_kv_final_cost": int(past_len),
+                        "surrogate_kv_budget_gap": int(head_past_capacity) - int(past_len),
+                    }
+                else:
+                    plan_cluster._precomputed_allocator_head = int(head_idx)
+                    allocated = plan_cluster._dynamic_surrogate_kv_allocation(
+                        token_scores=head_token_scores.to(dtype=torch.float32),
+                        chunk_slices=shared_chunk_slices,
+                        chunk_lengths=shared_chunk_lengths,
+                        target_compressed_tokens=int(head_capacity_prompt),
+                        sink_len=int(sink_len),
+                        recent_len=int(recent_len),
+                    )
+                    fast_plan = dict(getattr(plan_cluster, "_last_fast_pack_plan", {}) or {})
+                    if allocated is None or not fast_plan:
+                        raw_spans = [(int(sink_len), int(past_len))]
+                    else:
+                        raw_spans = [
+                            (int(start), int(end))
+                            for start, end in fast_plan.get("raw_spans", [])
+                            if int(end) > int(start)
+                        ]
+                        planned_slices = list(fast_plan.get("chunk_slices", []) or [])
+                        for surrogate_idx in fast_plan.get("surrogate_chunk_indices_list", []) or []:
+                            idx = int(surrogate_idx)
+                            if 0 <= idx < len(planned_slices):
+                                start, end = planned_slices[idx]
+                                if int(end) > int(start):
+                                    surrogate_spans.append((int(start), int(end)))
+                    child_stats = dict(getattr(plan_cluster, "_last_allocator_stats", {}) or {})
+                    raw_tokens = int(sum(max(0, int(end) - int(start)) for start, end in raw_spans))
+                    surrogate_tokens = int(sum(max(0, int(end) - int(start)) for start, end in surrogate_spans))
+                    used_entries = int(sink_len) + int(raw_tokens) + int(len(surrogate_spans))
+                    head_len = int(used_entries) + int(recent_len)
+                    child_stats.setdefault("ks_run_raw_tokens", int(raw_tokens))
+                    child_stats.setdefault("ks_run_raw_regions", int(len(raw_spans)))
+                    child_stats.setdefault("ks_run_surrogate_regions", int(len(surrogate_spans)))
+                    child_stats.setdefault("ks_run_surrogate_tokens", int(surrogate_tokens))
+                    child_stats.setdefault(
+                        "ks_run_drop_tokens",
+                        max(0, int(compressible_len) - int(raw_tokens) - int(surrogate_tokens)),
+                    )
+                    child_stats.setdefault("ks_run_used_entries", int(used_entries))
+                    child_stats.setdefault("ks_run_budget_gap", int(head_past_capacity) - int(used_entries))
+
+            head_lens.append(head_len)
+            mode_counts = {}
+            if int(child_stats.get("ks_run_surrogate_regions", 0) or 0) > 0:
+                mode_counts["local"] = int(child_stats.get("ks_run_surrogate_regions", 0) or 0)
+            if int(child_stats.get("ks_run_drop_tokens", 0) or 0) > 0:
+                mode_counts["drop"] = int(child_stats.get("ks_run_drop_regions", 1) or 1)
+            child_mode_counts.append(mode_counts)
+            child_selected_runs.append(
+                int(child_stats.get("ks_run_raw_regions", 0) or 0)
+                + int(child_stats.get("ks_run_surrogate_regions", 0) or 0)
+            )
+            child_surrogate_slots.append(int(child_stats.get("ks_run_surrogate_regions", len(surrogate_spans)) or 0))
+            child_chunks.append(int(chunk_count))
+            for child_key in (
+                "ks_run_raw_tokens",
+                "ks_run_surrogate_regions",
+                "ks_run_surrogate_tokens",
+                "ks_run_drop_tokens",
+                "ks_run_used_entries",
+                "ks_run_budget_gap",
+                "surrogate_kv_selected_surrogates",
+                "surrogate_kv_final_cost",
+                "surrogate_kv_budget_gap",
+            ):
+                collect_child_numeric(child_key, child_stats.get(child_key))
+            for child_key, child_value in child_stats.items():
+                if str(child_key).startswith("surrogate_kv_timing_alloc_"):
+                    collect_child_numeric(str(child_key), child_value)
+            head_plans.append({"raw_spans": raw_spans, "surrogate_spans": surrogate_spans})
+
+        timing_breakdown["planning"] += float(time.perf_counter() - planning_start)
+
+        proto_start = time.perf_counter()
+        head_score_bank = None
+        if (
+            isinstance(precomputed_head_scores, torch.Tensor)
+            and precomputed_head_scores.ndim == 3
+            and precomputed_head_scores.shape[0] == int(bsz)
+            and precomputed_head_scores.shape[1] >= int(key_heads)
+            and precomputed_head_scores.shape[2] >= int(past_len)
+        ):
+            head_score_bank = precomputed_head_scores[0, : int(key_heads), :].detach()
+        surrogate_banks = self._headwise_norm_rms_prototypes_from_spans_batch(
+            key_states=key_states,
+            value_states=value_states,
+            head_scores=head_score_bank,
+            head_spans=[plan["surrogate_spans"] for plan in head_plans],
+            base_start=int(sink_len),
+            base_end=int(past_len),
+            micro_len=int(micro_len),
+        )
+        timing_breakdown["prototype"] += float(time.perf_counter() - proto_start)
+
+        pack_start = time.perf_counter()
+        flat_keys = []
+        flat_values = []
+        for head_idx, plan in enumerate(head_plans):
+            pieces_key = []
+            pieces_value = []
+            if int(sink_len) > 0:
+                pieces_key.append(key_states[:, int(head_idx) : int(head_idx) + 1, : int(sink_len), :])
+                pieces_value.append(value_states[:, int(head_idx) : int(head_idx) + 1, : int(sink_len), :])
+            for start, end in plan["raw_spans"]:
+                if int(end) <= int(start):
+                    continue
+                pieces_key.append(key_states[:, int(head_idx) : int(head_idx) + 1, int(start) : int(end), :])
+                pieces_value.append(value_states[:, int(head_idx) : int(head_idx) + 1, int(start) : int(end), :])
+            proto_key, proto_value = (
+                surrogate_banks[int(head_idx)]
+                if int(head_idx) < len(surrogate_banks)
+                else (
+                    key_states.new_empty((1, 1, 0, head_dim)),
+                    value_states.new_empty((1, 1, 0, head_dim)),
+                )
+            )
+            if proto_key.numel() > 0:
+                pieces_key.append(proto_key)
+                pieces_value.append(proto_value)
+            if int(recent_len) > 0:
+                pieces_key.append(key_states[:, int(head_idx) : int(head_idx) + 1, int(past_len) :, :])
+                pieces_value.append(value_states[:, int(head_idx) : int(head_idx) + 1, int(past_len) :, :])
+            head_key = torch.cat(pieces_key, dim=2) if pieces_key else key_states.new_empty((1, 1, 0, head_dim))
+            head_value = torch.cat(pieces_value, dim=2) if pieces_value else value_states.new_empty((1, 1, 0, head_dim))
+            head_lens[int(head_idx)] = int(head_key.shape[2])
+            flat_keys.append(head_key.reshape(-1, head_dim))
+            flat_values.append(head_value.reshape(-1, head_dim))
+        timing_breakdown["packing"] += float(time.perf_counter() - pack_start)
+
+        flat_key = torch.cat(flat_keys, dim=0) if flat_keys else key_states.new_empty((0, head_dim))
+        flat_value = torch.cat(flat_values, dim=0) if flat_values else value_states.new_empty((0, head_dim))
+        self._init_headwise_flatten_metadata(
+            head_lens=head_lens,
+            device=key_states.device,
+            key_heads=int(key_heads),
+            query_heads=int(query_heads),
+            num_key_value_groups=int(groups),
+        )
+
+        capacity_float = key_head_caps.to(dtype=torch.float32)
+        prompt_caps = key_head_caps.to(dtype=torch.long) + int(recent_len)
+        prompt_float = prompt_caps.to(dtype=torch.float32)
+        head_len_tensor = torch.as_tensor(head_lens, device=key_states.device, dtype=torch.long)
+        head_budget_gap = prompt_caps - head_len_tensor if head_lens else prompt_caps.new_empty((0,))
+        head_budget_overflow = torch.clamp(-head_budget_gap, min=0) if head_lens else prompt_caps.new_empty((0,))
+        self._last_allocator_stats.update(
+            {
+                "surrogate_kv_headwise_varlen": 1,
+                "surrogate_kv_headwise_uncompressed": 0,
+                "surrogate_kv_headwise_exact_query_heads": int(exact_query_heads),
+                "surrogate_kv_headwise_flatten_tokens": int(flat_key.shape[0]),
+                "surrogate_kv_headwise_original_key_heads": int(original_key_heads),
+                "surrogate_kv_headwise_original_gqa_groups": int(original_groups),
+                "surrogate_kv_headwise_key_heads": int(key_heads),
+                "surrogate_kv_headwise_query_heads": int(query_heads),
+                "surrogate_kv_headwise_gqa_groups": int(groups),
+                "surrogate_kv_headwise_gqa_capacity_fusion_sum": int(gqa_capacity_fusion == "sum"),
+                "surrogate_kv_headwise_gqa_capacity_fusion_mean": int(gqa_capacity_fusion == "mean"),
+                "surrogate_kv_headwise_gqa_capacity_fusion_exact": int(gqa_capacity_fusion == "ada_exact_query_heads"),
+                "surrogate_kv_headwise_capacity_min": int(key_head_caps.min().detach().cpu().item()),
+                "surrogate_kv_headwise_capacity_max": int(key_head_caps.max().detach().cpu().item()),
+                "surrogate_kv_headwise_capacity_mean": float(capacity_float.mean().detach().cpu().item()),
+                "surrogate_kv_headwise_prompt_capacity_min": int(prompt_caps.min().detach().cpu().item()),
+                "surrogate_kv_headwise_prompt_capacity_max": int(prompt_caps.max().detach().cpu().item()),
+                "surrogate_kv_headwise_prompt_capacity_mean": float(prompt_float.mean().detach().cpu().item()),
+                "surrogate_kv_headwise_budget_gap_min": int(head_budget_gap.min().detach().cpu().item()) if head_lens else 0,
+                "surrogate_kv_headwise_budget_gap_mean": (
+                    float(head_budget_gap.to(dtype=torch.float32).mean().detach().cpu().item()) if head_lens else 0.0
+                ),
+                "surrogate_kv_headwise_budget_overflow_max": (
+                    int(head_budget_overflow.max().detach().cpu().item()) if head_lens else 0
+                ),
+                "surrogate_kv_headwise_budget_preserved": (
+                    int(int(head_budget_overflow.max().detach().cpu().item()) == 0) if head_lens else 1
+                ),
+                "surrogate_kv_headwise_head_len_min": int(min(head_lens) if head_lens else 0),
+                "surrogate_kv_headwise_head_len_max": int(max(head_lens) if head_lens else 0),
+                "surrogate_kv_headwise_head_len_mean": float(sum(head_lens) / max(1, len(head_lens))),
+                "surrogate_kv_headwise_precomputed_scores": int(isinstance(precomputed_head_scores, torch.Tensor)),
+                "surrogate_kv_timing_update_score_seconds": float(score_seconds),
+            }
+        )
+        for child_key, child_sum in child_numeric_sum.items():
+            child_count = max(1, int(child_numeric_count.get(child_key, 1)))
+            self._last_allocator_stats[f"surrogate_kv_headwise_child_mean_{child_key}"] = float(child_sum) / float(child_count)
+
+        self.last_stats = self._stats(
+            full_tokens=int(q_len),
+            compressed_tokens=max(head_lens) if head_lens else 0,
+            recent_tokens=int(recent_len),
+            selected_chunks=max(child_selected_runs) if child_selected_runs else 0,
+            selected_runs=max(child_selected_runs) if child_selected_runs else 0,
+            num_chunks=max(child_chunks) if child_chunks else 0,
+            chunk_size=int(self.chunk_size),
+            sink_tokens=int(sink_len),
+            two_surrogate_chunks=max(child_surrogate_slots) if child_surrogate_slots else 0,
+            mode_counts=self._merge_mode_counts(child_mode_counts),
+            op_seconds=time.perf_counter() - update_start,
+            configured_keep_ratio=configured_keep_ratio,
+            timing_breakdown=timing_breakdown,
+        )
+        return flat_key, flat_value
+
+    def _init_headwise_flatten_metadata(
+        self,
+        *,
+        head_lens: Sequence[int],
+        device,
+        key_heads: int,
+        query_heads: int,
+        num_key_value_groups: int,
+    ) -> None:
+        del query_heads
+        metadata_heads = int(key_heads)
+        self.gqa_support = int(num_key_value_groups) > 1
+        self.num_key_value_groups = max(1, int(num_key_value_groups))
+        self.head_lens = torch.tensor([int(v) for v in head_lens], dtype=torch.int32, device=device)
+        self.klen_sum = int(sum(int(v) for v in head_lens))
+        self.max_seqlen_k = int(max([int(v) for v in head_lens] or [0]))
+        self.cu_headlens = torch.cumsum(self.head_lens, dim=0, dtype=torch.int32)
+        self.cu_klen = self.cu_headlens - self.head_lens
+        self.cu_klen = torch.cat(
+            [self.cu_klen, torch.tensor([self.klen_sum], dtype=torch.int32, device=device)],
+            dim=0,
+        )
+        self.layer_qlens = torch.ones(metadata_heads, dtype=torch.int32, device=device)
+        self.qlen_sum = int(metadata_heads)
+        self.cu_qlen = torch.cumsum(self.layer_qlens, dim=0, dtype=torch.int32) - self.layer_qlens
+        self.cu_qlen = torch.cat(
+            [self.cu_qlen, torch.tensor([self.qlen_sum], dtype=torch.int32, device=device)],
+            dim=0,
+        )
+        self.cu_offset = torch.arange(0, metadata_heads + 1, dtype=torch.int32, device=device)
+        self.cu_head_offset = torch.arange(1, metadata_heads + 1, dtype=torch.int32, device=device)
+
     @staticmethod
     def _span_index_tensor(spans: Sequence[Tuple[int, int]], *, device):
         compact_spans = [(int(start), int(end)) for start, end in spans if int(end) > int(start)]
@@ -4019,122 +3800,160 @@ class SurKVCluster:
         atom_end_arr = np.minimum(atom_start_arr + int(micro_len), int(base_end)).astype(np.int64)
         atom_len_int_arr = (atom_end_arr - atom_start_arr).astype(np.int64)
 
-        scores = token_scores[:, int(base_start) : int(base_end)].detach().to(dtype=torch.float32)
         regular_atoms = int((int(base_end) - int(base_start)) // int(micro_len))
         regular_tokens = int(regular_atoms) * int(micro_len)
-
-        def atom_mean_peak_parts(score_tensor):
-            local_mean_parts = []
-            local_peak_parts = []
-            if regular_atoms > 0:
-                regular = score_tensor[0, :regular_tokens].reshape(int(regular_atoms), int(micro_len))
-                local_mean_parts.append(regular.mean(dim=1))
-                local_peak_parts.append(regular.max(dim=1).values)
-            if regular_atoms < int(atom_start_arr.size):
-                segment = score_tensor[0, int(regular_atoms) * int(micro_len) :]
-                local_mean_parts.append(segment.mean().view(1))
-                local_peak_parts.append(segment.max().view(1))
-            return local_mean_parts, local_peak_parts
-
-        mean_parts, peak_parts = atom_mean_peak_parts(scores)
-        if not mean_parts:
-            return None
-
-        atom_mean = torch.cat(mean_parts, dim=0).view(1, -1)
-        atom_peak = torch.cat(peak_parts, dim=0).view(1, -1)
-        score_method = str(getattr(self, "score_method", "attention") or "attention").replace("-", "_").lower()
-        surrogate_score_source = "importance"
-        surrogate_atom_mean = atom_mean
-        surrogate_atom_peak = atom_peak
-        residual_token_scores = getattr(self, "_last_surrogate_residual_token_scores", None)
-        if (
-            score_method in {"andpro", "anchor_projection", "projection", "proj"}
-            and _SURKV_ANDPRO_SURROGATE_SCORE_SOURCE in {"attention", "attn", "snap", "snapkv"}
-            and isinstance(residual_token_scores, torch.Tensor)
-            and residual_token_scores.ndim == 2
-            and residual_token_scores.shape[0] == token_scores.shape[0]
-            and residual_token_scores.shape[1] >= int(base_end)
-        ):
-            residual_scores = residual_token_scores[:, int(base_start) : int(base_end)].detach().to(
-                device=scores.device,
-                dtype=torch.float32,
-            )
-            residual_mean_parts, residual_peak_parts = atom_mean_peak_parts(residual_scores)
-            if residual_mean_parts:
-                surrogate_atom_mean = torch.cat(residual_mean_parts, dim=0).view(1, -1)
-                surrogate_atom_peak = torch.cat(residual_peak_parts, dim=0).view(1, -1)
-                surrogate_score_source = "attention"
-        mean_rank_t = _rank01(atom_mean)[0]
-        peak_rank_t = _rank01(atom_peak)[0]
-        surrogate_mean_rank_t = _rank01(surrogate_atom_mean)[0]
-        surrogate_peak_rank_t = _rank01(surrogate_atom_peak)[0]
-        surrogate_risk_t = torch.maximum(surrogate_mean_rank_t, surrogate_peak_rank_t)
-        current_risk_t = torch.maximum(mean_rank_t, peak_rank_t)
-        if bool(predictive):
-            atom_spread = torch.clamp(atom_peak - atom_mean, min=0.0)
-            spread_rank_t = _rank01(atom_spread)[0]
-            if atom_mean.shape[1] > 1:
-                left_mean = torch.cat((atom_mean[:, :1], atom_mean[:, :-1]), dim=1)
-                right_mean = torch.cat((atom_mean[:, 1:], atom_mean[:, -1:]), dim=1)
-                neighbor_floor = torch.maximum(left_mean, right_mean)
-                local_contrast = torch.clamp(atom_peak - neighbor_floor, min=0.0)
-                contrast_rank_t = _rank01(local_contrast)[0]
-            else:
-                contrast_rank_t = spread_rank_t
-            future_rank_t = torch.minimum(spread_rank_t, contrast_rank_t)
-            # Future-looking spikes should protect raw atoms first.  Letting
-            # them inflate residual surrogate value makes long, incoherent
-            # packets look cheap at tight budgets.
-            atom_risk_t = torch.maximum(current_risk_t, future_rank_t)
-        else:
-            future_rank_t = torch.zeros_like(current_risk_t)
-            atom_risk_t = current_risk_t
-        andpro_residual_guard_t = torch.zeros_like(atom_risk_t)
-        andpro_residual_guard_weight = float(_SURKV_ANDPRO_RESIDUAL_GUARD_WEIGHT)
-        if bool(_SURKV_ANDPRO_RESIDUAL_GUARD_AUTO):
-            fusion = str(getattr(self, "head_score_fusion", "mean") or "mean").replace("-", "_").lower()
-            andpro_residual_guard_weight = 0.25 if fusion in {"ada_shared", "ada", "adakv_shared", "adakv"} else 0.0
-        andpro_residual_guard_enabled = int(
-            score_method in {"andpro", "anchor_projection", "projection", "proj"}
-            and andpro_residual_guard_weight > 0.0
-        )
-        if int(andpro_residual_guard_enabled):
-            # Projection scores can be concentrated inside a would-be surrogate
-            # region.  Boost those peaky atoms so the allocator pays raw tokens
-            # where a single averaged surrogate would blur the anchor direction.
-            andpro_spread = torch.clamp(atom_peak - atom_mean, min=0.0)
-            andpro_residual_guard_t = _rank01(andpro_spread)[0]
-            atom_risk_t = torch.maximum(atom_risk_t, andpro_residual_guard_t * float(andpro_residual_guard_weight))
-        if bool(predictive):
-            risk_arrays = (
-                torch.stack((mean_rank_t, future_rank_t, atom_risk_t), dim=0)
-                .detach()
-                .to(device="cpu", dtype=torch.float64)
-                .numpy()
-            )
-            mean_risk_arr = risk_arrays[0] + 1e-6
-            future_risk_arr = risk_arrays[1] + 1e-6
-            atom_risk_arr = risk_arrays[2] + 1e-6
-        else:
-            risk_arrays = (
-                torch.stack((mean_rank_t, atom_risk_t, andpro_residual_guard_t), dim=0)
-                .detach()
-                .to(device="cpu", dtype=torch.float64)
-                .numpy()
-            )
-            mean_risk_arr = risk_arrays[0] + 1e-6
-            future_risk_arr = np.full_like(mean_risk_arr, 1e-6)
-            atom_risk_arr = risk_arrays[1] + 1e-6
-            andpro_residual_guard_arr = risk_arrays[2]
-        if bool(predictive):
-            andpro_residual_guard_arr = (
-                andpro_residual_guard_t.detach().to(device="cpu", dtype=torch.float64).numpy()
-            )
-
-        device = token_scores.device
         num_atoms = int(atom_start_arr.size)
         if num_atoms <= 0:
             return None
+        tail_floor = 1.0 / float(max(2, num_atoms + 1))
+        tail_price_scale = -math.log(float(tail_floor))
+        score_method = str(getattr(self, "score_method", "attention") or "attention").replace("-", "_").lower()
+        surrogate_score_source = "importance"
+        andpro_residual_guard_weight = float(_SURKV_ANDPRO_RESIDUAL_GUARD_WEIGHT)
+        andpro_residual_guard_enabled = 0
+        setup = getattr(self, "_precomputed_allocator_setup", None)
+        setup_head = int(getattr(self, "_precomputed_allocator_head", -1))
+        use_precomputed_setup = (
+            not bool(predictive)
+            and score_method not in {"andpro", "anchor_projection", "projection", "proj"}
+            and isinstance(setup, dict)
+            and int(setup.get("base_start", -1)) == int(base_start)
+            and int(setup.get("base_end", -1)) == int(base_end)
+            and int(setup.get("micro_len", -1)) == int(micro_len)
+            and int(setup.get("num_atoms", -1)) == int(num_atoms)
+            and int(setup_head) >= 0
+        )
+
+        if bool(use_precomputed_setup):
+            mean_risk_arr = np.asarray(setup["mean_risk"][int(setup_head)], dtype=np.float64)
+            future_risk_arr = np.asarray(setup["future_risk"][int(setup_head)], dtype=np.float64)
+            atom_risk_arr = np.asarray(setup["atom_risk"][int(setup_head)], dtype=np.float64)
+            mean_signal_arr = np.asarray(setup["mean_signal"][int(setup_head)], dtype=np.float64)
+            future_signal_arr = np.asarray(setup["future_signal"][int(setup_head)], dtype=np.float64)
+            atom_signal_arr = np.asarray(setup["atom_signal"][int(setup_head)], dtype=np.float64)
+            surrogate_signal_arr = np.asarray(setup["surrogate_signal"][int(setup_head)], dtype=np.float64)
+            andpro_residual_guard_arr = np.asarray(setup["andpro_guard"][int(setup_head)], dtype=np.float64)
+        else:
+            scores = token_scores[:, int(base_start) : int(base_end)].detach().to(dtype=torch.float32)
+
+            def atom_mean_peak_parts(score_tensor):
+                local_mean_parts = []
+                local_peak_parts = []
+                if regular_atoms > 0:
+                    regular = score_tensor[0, :regular_tokens].reshape(int(regular_atoms), int(micro_len))
+                    local_mean_parts.append(regular.mean(dim=1))
+                    local_peak_parts.append(regular.max(dim=1).values)
+                if regular_atoms < int(atom_start_arr.size):
+                    segment = score_tensor[0, int(regular_atoms) * int(micro_len) :]
+                    local_mean_parts.append(segment.mean().view(1))
+                    local_peak_parts.append(segment.max().view(1))
+                return local_mean_parts, local_peak_parts
+
+            mean_parts, peak_parts = atom_mean_peak_parts(scores)
+            if not mean_parts:
+                return None
+
+            atom_mean = torch.cat(mean_parts, dim=0).view(1, -1)
+            atom_peak = torch.cat(peak_parts, dim=0).view(1, -1)
+            surrogate_atom_mean = atom_mean
+            surrogate_atom_peak = atom_peak
+            residual_token_scores = getattr(self, "_last_surrogate_residual_token_scores", None)
+            if (
+                score_method in {"andpro", "anchor_projection", "projection", "proj"}
+                and _SURKV_ANDPRO_SURROGATE_SCORE_SOURCE in {"attention", "attn", "snap", "snapkv"}
+                and isinstance(residual_token_scores, torch.Tensor)
+                and residual_token_scores.ndim == 2
+                and residual_token_scores.shape[0] == token_scores.shape[0]
+                and residual_token_scores.shape[1] >= int(base_end)
+            ):
+                residual_scores = residual_token_scores[:, int(base_start) : int(base_end)].detach().to(
+                    device=scores.device,
+                    dtype=torch.float32,
+                )
+                residual_mean_parts, residual_peak_parts = atom_mean_peak_parts(residual_scores)
+                if residual_mean_parts:
+                    surrogate_atom_mean = torch.cat(residual_mean_parts, dim=0).view(1, -1)
+                    surrogate_atom_peak = torch.cat(residual_peak_parts, dim=0).view(1, -1)
+                    surrogate_score_source = "attention"
+            mean_rank_t = _rank01(atom_mean)[0]
+            peak_rank_t = _rank01(atom_peak)[0]
+            surrogate_mean_rank_t = _rank01(surrogate_atom_mean)[0]
+            surrogate_peak_rank_t = _rank01(surrogate_atom_peak)[0]
+            surrogate_risk_t = torch.maximum(surrogate_mean_rank_t, surrogate_peak_rank_t)
+            current_risk_t = torch.maximum(mean_rank_t, peak_rank_t)
+            if bool(predictive):
+                atom_spread = torch.clamp(atom_peak - atom_mean, min=0.0)
+                spread_rank_t = _rank01(atom_spread)[0]
+                if atom_mean.shape[1] > 1:
+                    left_mean = torch.cat((atom_mean[:, :1], atom_mean[:, :-1]), dim=1)
+                    right_mean = torch.cat((atom_mean[:, 1:], atom_mean[:, -1:]), dim=1)
+                    neighbor_floor = torch.maximum(left_mean, right_mean)
+                    local_contrast = torch.clamp(atom_peak - neighbor_floor, min=0.0)
+                    contrast_rank_t = _rank01(local_contrast)[0]
+                else:
+                    contrast_rank_t = spread_rank_t
+                future_rank_t = torch.minimum(spread_rank_t, contrast_rank_t)
+                # Future-looking spikes should protect raw atoms first.  Letting
+                # them inflate residual surrogate value makes long, incoherent
+                # packets look cheap at tight budgets.
+                atom_risk_t = torch.maximum(current_risk_t, future_rank_t)
+            else:
+                future_rank_t = torch.zeros_like(current_risk_t)
+                atom_risk_t = current_risk_t
+            andpro_residual_guard_t = torch.zeros_like(atom_risk_t)
+            if bool(_SURKV_ANDPRO_RESIDUAL_GUARD_AUTO):
+                fusion = str(getattr(self, "head_score_fusion", "mean") or "mean").replace("-", "_").lower()
+                andpro_residual_guard_weight = 0.25 if fusion in {"ada_shared", "ada", "adakv_shared", "adakv"} else 0.0
+            andpro_residual_guard_enabled = int(
+                score_method in {"andpro", "anchor_projection", "projection", "proj"}
+                and andpro_residual_guard_weight > 0.0
+            )
+            if int(andpro_residual_guard_enabled):
+                # Projection scores can be concentrated inside a would-be surrogate
+                # region.  Boost those peaky atoms so the allocator pays raw tokens
+                # where a single averaged surrogate would blur the anchor direction.
+                andpro_spread = torch.clamp(atom_peak - atom_mean, min=0.0)
+                andpro_residual_guard_t = _rank01(andpro_spread)[0]
+                atom_risk_t = torch.maximum(atom_risk_t, andpro_residual_guard_t * float(andpro_residual_guard_weight))
+            if bool(predictive):
+                risk_arrays = (
+                    torch.stack((mean_rank_t, future_rank_t, atom_risk_t), dim=0)
+                    .detach()
+                    .to(device="cpu", dtype=torch.float64)
+                    .numpy()
+                )
+                mean_risk_arr = risk_arrays[0] + 1e-6
+                future_risk_arr = risk_arrays[1] + 1e-6
+                atom_risk_arr = risk_arrays[2] + 1e-6
+            else:
+                risk_arrays = (
+                    torch.stack((mean_rank_t, atom_risk_t, andpro_residual_guard_t), dim=0)
+                    .detach()
+                    .to(device="cpu", dtype=torch.float64)
+                    .numpy()
+                )
+                mean_risk_arr = risk_arrays[0] + 1e-6
+                future_risk_arr = np.full_like(mean_risk_arr, 1e-6)
+                atom_risk_arr = risk_arrays[1] + 1e-6
+                andpro_residual_guard_arr = risk_arrays[2]
+            if bool(predictive):
+                andpro_residual_guard_arr = (
+                    andpro_residual_guard_t.detach().to(device="cpu", dtype=torch.float64).numpy()
+                )
+
+            def tail_scores(values: Sequence[float]) -> np.ndarray:
+                ranks = np.clip(np.asarray(values, dtype=np.float64), 0.0, 1.0)
+                return -np.log(np.maximum(float(tail_floor), 1.0 - ranks))
+
+            mean_signal_arr = tail_scores(mean_risk_arr)
+            future_signal_arr = tail_scores(future_risk_arr)
+            atom_signal_arr = tail_scores(atom_risk_arr)
+            surrogate_risk_arr = (
+                surrogate_risk_t.detach().to(device="cpu", dtype=torch.float64).numpy() + 1e-6
+            )
+            surrogate_signal_arr = tail_scores(surrogate_risk_arr)
+
+        device = token_scores.device
         prefix_len = np.concatenate(([0], np.cumsum(atom_len_int_arr))).astype(np.int64)
         atom_indices_arr = np.arange(num_atoms, dtype=np.int64)
 
@@ -4142,20 +3961,6 @@ class SurKVCluster:
         budget_entries = max(1, int(budget_entries))
         full_cost = int(atom_len_int_arr.sum())
 
-        tail_floor = 1.0 / float(max(2, num_atoms + 1))
-        tail_price_scale = -math.log(float(tail_floor))
-
-        def tail_scores(values: Sequence[float]) -> np.ndarray:
-            ranks = np.clip(np.asarray(values, dtype=np.float64), 0.0, 1.0)
-            return -np.log(np.maximum(float(tail_floor), 1.0 - ranks))
-
-        mean_signal_arr = tail_scores(mean_risk_arr)
-        future_signal_arr = tail_scores(future_risk_arr)
-        atom_signal_arr = tail_scores(atom_risk_arr)
-        surrogate_risk_arr = (
-            surrogate_risk_t.detach().to(device="cpu", dtype=torch.float64).numpy() + 1e-6
-        )
-        surrogate_signal_arr = tail_scores(surrogate_risk_arr)
         andpro_raw_floor_exchange = int(
             score_method in {"andpro", "anchor_projection", "projection", "proj"}
         )
@@ -4228,7 +4033,7 @@ class SurKVCluster:
                 surrogate_lens,
             )
 
-        def materialize_actions(actions_ref: Sequence[int]):
+        def materialize_actions(actions_ref: Sequence[int], *, tensors: bool = True):
             starts, ends, run_actions, _run_lens = action_runs(actions_ref)
             new_slices = [
                 (int(atom_start_arr[int(start_idx)]), int(atom_end_arr[int(end_idx) - 1]))
@@ -4239,13 +4044,6 @@ class SurKVCluster:
             new_chunk_lengths_arr = (
                 atom_end_arr[ends.astype(np.int64) - 1] - atom_start_arr[starts.astype(np.int64)]
             ).astype(np.int64, copy=False)
-            new_chunk_lengths = torch.as_tensor(new_chunk_lengths_arr, device=device, dtype=torch.long)
-            new_replace_mask = torch.as_tensor(new_selected[None, :], device=device, dtype=torch.bool)
-            new_surrogate_lengths_tensor = torch.as_tensor(
-                new_surrogate_lengths[None, :],
-                device=device,
-                dtype=torch.long,
-            )
             output_lengths_arr = np.where(
                 new_selected,
                 new_surrogate_lengths,
@@ -4269,6 +4067,15 @@ class SurKVCluster:
                     for idx in surrogate_indices.tolist()
                 ],
             }
+            if not bool(tensors):
+                return True
+            new_chunk_lengths = torch.as_tensor(new_chunk_lengths_arr, device=device, dtype=torch.long)
+            new_replace_mask = torch.as_tensor(new_selected[None, :], device=device, dtype=torch.bool)
+            new_surrogate_lengths_tensor = torch.as_tensor(
+                new_surrogate_lengths[None, :],
+                device=device,
+                dtype=torch.long,
+            )
             return new_slices, new_chunk_lengths, new_replace_mask, new_surrogate_lengths_tensor
 
         profile_mark("define_base_helpers")
@@ -4290,21 +4097,31 @@ class SurKVCluster:
                     "surrogate_kv_budget_gap": int(budget_entries) - int(full_cost),
                     "surrogate_kv_tail_price_scale": float(tail_price_scale),
                     "surrogate_kv_predictive": int(bool(predictive)),
-                    "surrogate_kv_andpro_raw_floor_exchange": int(andpro_raw_floor_exchange),
-                    "surrogate_kv_andpro_raw_bridge": int(andpro_raw_bridge),
-                    "surrogate_kv_andpro_surrogate_score_attention": int(surrogate_score_source == "attention"),
-                    "surrogate_kv_andpro_residual_guard": int(andpro_residual_guard_enabled),
-                    "surrogate_kv_andpro_residual_guard_weight": float(andpro_residual_guard_weight),
-                    "surrogate_kv_andpro_residual_guard_mean": (
-                        float(np.mean(andpro_residual_guard_arr)) if int(andpro_residual_guard_enabled) else 0.0
-                    ),
                 }
             )
+            if score_method in {"andpro", "anchor_projection", "projection", "proj"}:
+                stats.update(
+                    {
+                        "surrogate_kv_andpro_raw_floor_exchange": int(andpro_raw_floor_exchange),
+                        "surrogate_kv_andpro_raw_bridge": int(andpro_raw_bridge),
+                        "surrogate_kv_andpro_surrogate_score_attention": int(surrogate_score_source == "attention"),
+                        "surrogate_kv_andpro_residual_guard": int(andpro_residual_guard_enabled),
+                        "surrogate_kv_andpro_residual_guard_weight": float(andpro_residual_guard_weight),
+                        "surrogate_kv_andpro_residual_guard_mean": (
+                            float(np.mean(andpro_residual_guard_arr)) if int(andpro_residual_guard_enabled) else 0.0
+                        ),
+                    }
+                )
             stats.update(profile_export())
             self._last_allocator_stats = stats
-            materialize_start = time.perf_counter()
-            materialized = materialize_actions(actions_full)
-            stats["surrogate_kv_timing_alloc_materialize_seconds"] = float(time.perf_counter() - materialize_start)
+            if bool(getattr(self, "_allocator_plan_only", False)):
+                materialize_start = time.perf_counter()
+                materialized = materialize_actions(actions_full, tensors=False)
+                stats["surrogate_kv_timing_alloc_materialize_seconds"] = float(time.perf_counter() - materialize_start)
+            else:
+                materialize_start = time.perf_counter()
+                materialized = materialize_actions(actions_full)
+                stats["surrogate_kv_timing_alloc_materialize_seconds"] = float(time.perf_counter() - materialize_start)
             stats["surrogate_kv_timing_alloc_total_seconds"] = float(time.perf_counter() - profile_t0)
             self._last_allocator_stats = stats
             return materialized
@@ -5122,14 +4939,6 @@ class SurKVCluster:
                 "surrogate_kv_tail_price_scale": float(tail_price_scale),
                 "surrogate_kv_predictive": int(bool(predictive)),
                 "surrogate_kv_future_signal_mean": float(future_signal_arr.mean()) if future_signal_arr.size else 0.0,
-                "surrogate_kv_andpro_raw_floor_exchange": int(andpro_raw_floor_exchange),
-                "surrogate_kv_andpro_raw_bridge": int(andpro_raw_bridge),
-                "surrogate_kv_andpro_surrogate_score_attention": int(surrogate_score_source == "attention"),
-                "surrogate_kv_andpro_residual_guard": int(andpro_residual_guard_enabled),
-                "surrogate_kv_andpro_residual_guard_weight": float(andpro_residual_guard_weight),
-                "surrogate_kv_andpro_residual_guard_mean": (
-                    float(np.mean(andpro_residual_guard_arr)) if int(andpro_residual_guard_enabled) else 0.0
-                ),
                 "surrogate_kv_rejected_overlap": int(rejected_overlap),
                 "surrogate_kv_rejected_budget": int(rejected_budget),
                 "surrogate_kv_rejected_value": int(rejected_value),
@@ -5158,20 +4967,45 @@ class SurKVCluster:
                 "ks_run_merge_terminal_keep_frac": float(budget_entries) / max(1.0, float(full_cost)),
             }
         )
+        if score_method in {"andpro", "anchor_projection", "projection", "proj"}:
+            stats.update(
+                {
+                    "surrogate_kv_andpro_raw_floor_exchange": int(andpro_raw_floor_exchange),
+                    "surrogate_kv_andpro_raw_bridge": int(andpro_raw_bridge),
+                    "surrogate_kv_andpro_surrogate_score_attention": int(surrogate_score_source == "attention"),
+                    "surrogate_kv_andpro_residual_guard": int(andpro_residual_guard_enabled),
+                    "surrogate_kv_andpro_residual_guard_weight": float(andpro_residual_guard_weight),
+                    "surrogate_kv_andpro_residual_guard_mean": (
+                        float(np.mean(andpro_residual_guard_arr)) if int(andpro_residual_guard_enabled) else 0.0
+                    ),
+                }
+            )
         profile_mark("stats_update")
         stats.update(profile_export())
         self._last_allocator_stats = stats
-        materialize_start = time.perf_counter()
-        materialized = materialize_actions(actions)
-        stats["surrogate_kv_timing_alloc_materialize_seconds"] = float(time.perf_counter() - materialize_start)
+        if bool(getattr(self, "_allocator_plan_only", False)):
+            materialize_start = time.perf_counter()
+            materialized = materialize_actions(actions, tensors=False)
+            stats["surrogate_kv_timing_alloc_materialize_seconds"] = float(time.perf_counter() - materialize_start)
+        else:
+            materialize_start = time.perf_counter()
+            materialized = materialize_actions(actions)
+            stats["surrogate_kv_timing_alloc_materialize_seconds"] = float(time.perf_counter() - materialize_start)
         stats["surrogate_kv_timing_alloc_total_seconds"] = float(time.perf_counter() - profile_t0)
         self._last_allocator_stats = stats
         return materialized
 
-        del chunk_lengths
+    def _projected_residual_allocation(
+        self,
+        *,
+        token_scores,
+        chunk_slices: Sequence[Tuple[int, int]],
+        target_compressed_tokens: int,
+        sink_len: int,
+        recent_len: int,
+    ):
         if not chunk_slices or token_scores.shape[0] != 1:
             return None
-
         span = self._contiguous_chunk_span(chunk_slices)
         if span is None:
             return None
@@ -5179,318 +5013,518 @@ class SurKVCluster:
         if int(base_end) <= int(base_start):
             return None
 
-        micro_len = max(1, int(self.spec.dynamic_anchor_width or (int(self.chunk_size) // 4)))
-        atom_start_arr = np.arange(int(base_start), int(base_end), int(micro_len), dtype=np.int64)
-        if atom_start_arr.size <= 0:
-            return None
-        atom_end_arr = np.minimum(atom_start_arr + int(micro_len), int(base_end)).astype(np.int64)
-        atom_len_int_arr = (atom_end_arr - atom_start_arr).astype(np.int64)
-
-        scores = token_scores[:, int(base_start) : int(base_end)].detach().to(dtype=torch.float32)
-        regular_atoms = int((int(base_end) - int(base_start)) // int(micro_len))
-        mean_parts = []
-        peak_parts = []
-        if regular_atoms > 0:
-            regular_tokens = int(regular_atoms) * int(micro_len)
-            regular = scores[:, :regular_tokens].reshape(scores.shape[0], int(regular_atoms), int(micro_len))
-            mean_parts.append(regular.mean(dim=(0, 2)))
-            peak_parts.append(regular.max(dim=2).values.max(dim=0).values)
-        if regular_atoms < int(atom_start_arr.size):
-            segment = scores[:, int(regular_atoms) * int(micro_len) :]
-            mean_parts.append(segment.mean(dim=(0, 1), keepdim=False).view(1))
-            peak_parts.append(segment.max(dim=1).values.max(dim=0).values.view(1))
-        if not mean_parts:
-            return None
-
-        atom_mean = torch.cat(mean_parts, dim=0).view(1, -1)
-        atom_peak = torch.cat(peak_parts, dim=0).view(1, -1)
-        mean_rank_t = _rank01(atom_mean)[0]
-        peak_rank_t = _rank01(atom_peak)[0]
-        atom_risk_t = torch.maximum(mean_rank_t, peak_rank_t)
-        mean_risk_arr = mean_rank_t.detach().cpu().numpy().astype(np.float64) + 1e-6
-        atom_risk_arr = atom_risk_t.detach().cpu().numpy().astype(np.float64) + 1e-6
-
         device = token_scores.device
-        num_atoms = int(atom_start_arr.size)
-        if num_atoms <= 0:
+        base_alloc = None
+        if _env_flag("SURKV_PROJECTED_SNAP_SEED", False):
+            base_chunk_lengths = torch.as_tensor(
+                [int(end) - int(start) for start, end in chunk_slices],
+                device=device,
+                dtype=torch.long,
+            )
+            base_alloc = self._dynamic_surrogate_kv_allocation(
+                token_scores=token_scores,
+                chunk_slices=chunk_slices,
+                chunk_lengths=base_chunk_lengths,
+                target_compressed_tokens=target_compressed_tokens,
+                sink_len=sink_len,
+                recent_len=recent_len,
+            )
+        residual_token_scores = getattr(self, "_last_projected_residual_token_scores", None)
+        if base_alloc is not None and isinstance(residual_token_scores, torch.Tensor):
+            base_slices, base_lengths, base_selected, base_surrogate_lengths = base_alloc
+            if (
+                len(base_slices) > 0
+                and base_selected.ndim == 2
+                and base_surrogate_lengths.ndim == 2
+                and base_selected.shape[-1] == len(base_slices)
+                and base_surrogate_lengths.shape[-1] == len(base_slices)
+                and residual_token_scores.ndim == token_scores.ndim
+                and residual_token_scores.shape[0] == token_scores.shape[0]
+                and residual_token_scores.shape[-1] >= int(base_end)
+            ):
+                selected_np = base_selected[0].detach().to(device="cpu", dtype=torch.bool).numpy().astype(bool)
+                surrogate_lengths_np = (
+                    base_surrogate_lengths[0].detach().to(device="cpu", dtype=torch.long).numpy().astype(np.int64)
+                )
+                lengths_np = np.asarray([int(end) - int(start) for start, end in base_slices], dtype=np.int64)
+                raw_mask = ~selected_np
+                original_surrogate_mask = selected_np & (surrogate_lengths_np > 0)
+                original_surrogate_indices = np.flatnonzero(original_surrogate_mask).astype(np.int64)
+                drop_candidate_indices = np.flatnonzero(selected_np & (surrogate_lengths_np <= 0)).astype(np.int64)
+                stats = dict(getattr(self, "_last_allocator_stats", {}) or {})
+                budget_entries_stat = int(
+                    stats.get(
+                        "ks_run_budget_entries",
+                        max(1, int(target_compressed_tokens) - int(sink_len) - int(recent_len)),
+                    )
+                )
+                raw_tokens_existing = int(lengths_np[raw_mask].sum())
+                used_entries_existing = int(raw_tokens_existing) + int(original_surrogate_indices.size)
+                add_budget = max(0, int(budget_entries_stat) - int(used_entries_existing))
+                if add_budget > 0 and drop_candidate_indices.size > 0:
+                    local_residual = torch.clamp(
+                        residual_token_scores[0, int(base_start) : int(base_end)]
+                        .detach()
+                        .to(dtype=torch.float32),
+                        min=0.0,
+                    )
+                    mass_prefix = np.concatenate(
+                        ([0.0], np.cumsum(local_residual.detach().cpu().numpy().astype(np.float64), dtype=np.float64))
+                    )
+                    residual_dirs = getattr(self, "_last_projected_residual_directions", None)
+                    vector_prefix = None
+                    weight_prefix = None
+                    if (
+                        isinstance(residual_dirs, torch.Tensor)
+                        and residual_dirs.ndim == 3
+                        and residual_dirs.shape[0] == 1
+                        and residual_dirs.shape[1] >= int(base_end)
+                    ):
+                        local_dirs = residual_dirs[0, int(base_start) : int(base_end)].to(
+                            device=device,
+                            dtype=torch.float32,
+                        )
+                        local_weights = local_residual.to(device=device, dtype=torch.float32).clamp_min(1e-8)
+                        token_vectors = local_dirs * local_weights.view(-1, 1)
+                        vector_prefix = torch.cat(
+                            [torch.zeros_like(token_vectors[:1]), token_vectors.cumsum(dim=0)],
+                            dim=0,
+                        )
+                        weight_prefix = torch.cat(
+                            [torch.zeros_like(local_weights[:1]), local_weights.cumsum(dim=0)],
+                            dim=0,
+                        )
+
+                    def residual_packet_score(slice_idx: int) -> tuple[float, float, float]:
+                        start, end = base_slices[int(slice_idx)]
+                        rel_start = int(start) - int(base_start)
+                        rel_end = int(end) - int(base_start)
+                        if rel_end <= rel_start:
+                            return 0.0, 0.0, 0.0
+                        mass = float(mass_prefix[rel_end] - mass_prefix[rel_start])
+                        if mass <= 0.0:
+                            return 0.0, mass, 0.0
+                        if vector_prefix is None or weight_prefix is None:
+                            span_len = max(1, int(rel_end) - int(rel_start))
+                            density = mass / float(span_len)
+                            peak = float(local_residual[rel_start:rel_end].max().detach().cpu().item())
+                            coherence = float(density / max(peak, 1e-9))
+                        else:
+                            direction_sum = vector_prefix[rel_end] - vector_prefix[rel_start]
+                            denom = (weight_prefix[rel_end] - weight_prefix[rel_start]).clamp_min(1e-8)
+                            coherence = float(
+                                (direction_sum.norm() / denom).clamp(0.0, 1.0).detach().cpu().item()
+                            )
+                        return float(mass * max(0.0, coherence)), mass, float(coherence)
+
+                    original_scores = []
+                    for idx in original_surrogate_indices.tolist():
+                        value, _mass, _coherence = residual_packet_score(int(idx))
+                        if math.isfinite(float(value)) and float(value) > 0.0:
+                            original_scores.append(float(value))
+                    admission_floor = min(original_scores) if original_scores else 0.0
+
+                    ranked_candidates = []
+                    for idx in drop_candidate_indices.tolist():
+                        value, mass, coherence = residual_packet_score(int(idx))
+                        ranked_candidates.append((float(value), float(coherence), int(lengths_np[int(idx)]), int(idx)))
+                    ranked_candidates.sort(key=lambda item: (float(item[0]), float(item[1]), -int(item[2])), reverse=True)
+                    added = {
+                        int(idx)
+                        for _value, _coherence, _length, idx in ranked_candidates[: int(add_budget)]
+                        if float(_value) > float(admission_floor)
+                    }
+                    chosen = {int(idx) for idx in original_surrogate_indices.tolist()}
+                    chosen.update(added)
+                    new_surrogate_lengths_np = np.zeros_like(surrogate_lengths_np)
+                    for idx in original_surrogate_indices.tolist():
+                        new_surrogate_lengths_np[int(idx)] = max(1, int(surrogate_lengths_np[int(idx)]))
+                    for idx in added:
+                        new_surrogate_lengths_np[int(idx)] = 1
+                    output_lengths_np = np.where(
+                        raw_mask,
+                        lengths_np,
+                        new_surrogate_lengths_np,
+                    ).astype(np.int64)
+                    raw_tokens = int(lengths_np[raw_mask].sum())
+                    surrogate_tokens = int(lengths_np[list(chosen)].sum()) if chosen else 0
+                    drop_mask = selected_np & (new_surrogate_lengths_np == 0)
+                    drop_tokens = int(lengths_np[drop_mask].sum())
+                    plan = dict(getattr(self, "_last_fast_pack_plan", {}) or {})
+                    selected_indices = np.flatnonzero(selected_np).astype(np.int64)
+                    surrogate_indices = np.asarray(sorted(chosen), dtype=np.int64)
+                    plan.update(
+                        {
+                            "chunk_slices": tuple(base_slices),
+                            "selected_mask_list": [bool(v) for v in selected_np.tolist()],
+                            "output_length_list": [int(v) for v in output_lengths_np.tolist()],
+                            "raw_spans": [
+                                (int(base_slices[i][0]), int(base_slices[i][1]))
+                                for i in range(len(base_slices))
+                                if bool(raw_mask[i])
+                            ],
+                            "selected_chunk_indices_list": [int(v) for v in selected_indices.tolist()],
+                            "surrogate_chunk_indices_list": [int(v) for v in surrogate_indices.tolist()],
+                            "surrogate_lengths_list": [1 for _ in surrogate_indices.tolist()],
+                        }
+                    )
+                    plan.pop("prototype_token_indices", None)
+                    self._last_fast_pack_plan = plan
+                    added_coherences = [
+                        float(item[1])
+                        for item in ranked_candidates
+                        if int(item[3]) in added
+                    ]
+                    stats.update(
+                        {
+                            "surrogate_kv_allocator": "projected_residual_safe_add",
+                            "surrogate_kv_projected_residual_allocator": 1,
+                            "surrogate_kv_projected_snap_refine": 0,
+                            "surrogate_kv_projected_safe_add": 1,
+                            "surrogate_kv_projected_candidate_count": int(drop_candidate_indices.size),
+                            "surrogate_kv_projected_selected_packets": int(len(added)),
+                            "surrogate_kv_projected_preserved_packets": int(original_surrogate_indices.size),
+                            "surrogate_kv_projected_admission_floor": float(admission_floor),
+                            "surrogate_kv_projected_mean_coherence": (
+                                float(sum(added_coherences) / max(1, len(added_coherences)))
+                                if added_coherences
+                                else 0.0
+                            ),
+                            "ks_run_raw_tokens": int(raw_tokens),
+                            "ks_run_raw_regions": int(raw_mask.sum()),
+                            "ks_run_surrogate_regions": int(len(chosen)),
+                            "ks_run_surrogate_tokens": int(surrogate_tokens),
+                            "ks_run_drop_tokens": int(drop_tokens),
+                            "ks_run_drop_regions": int(drop_mask.sum()),
+                            "ks_run_budget_entries": int(budget_entries_stat),
+                            "ks_run_full_cost": int(sum(int(end) - int(start) for start, end in base_slices)),
+                            "ks_run_used_entries": int(raw_tokens) + int(len(chosen)),
+                            "ks_run_budget_gap": int(budget_entries_stat) - int(raw_tokens) - int(len(chosen)),
+                        }
+                    )
+                    self._last_allocator_stats = stats
+                    return (
+                        list(base_slices),
+                        torch.as_tensor(lengths_np, device=device, dtype=torch.long),
+                        torch.as_tensor(selected_np[None, :], device=device, dtype=torch.bool),
+                        torch.as_tensor(new_surrogate_lengths_np[None, :], device=device, dtype=torch.long),
+                    )
+            return base_alloc
+
+        micro_len = max(1, int(self.spec.dynamic_anchor_width or 4))
+        atom_spans = [
+            (start, min(start + int(micro_len), int(base_end)))
+            for start in range(int(base_start), int(base_end), int(micro_len))
+        ]
+        atom_count = len(atom_spans)
+        if atom_count <= 0:
             return None
 
-        budget_entries = int(target_compressed_tokens) - int(sink_len) - int(recent_len)
-        budget_entries = max(1, int(budget_entries))
-        full_cost = int(atom_len_int_arr.sum())
-
-        tail_floor = 1.0 / float(max(2, num_atoms + 1))
-
-        def tail_scores(values: Sequence[float]) -> np.ndarray:
-            ranks = np.clip(np.asarray(values, dtype=np.float64), 0.0, 1.0)
-            return -np.log(np.maximum(float(tail_floor), 1.0 - ranks))
-
-        mean_signal_arr = tail_scores(mean_risk_arr)
-        atom_signal_arr = tail_scores(atom_risk_arr)
-        atom_len_arr = np.maximum(1.0, atom_len_int_arr.astype(np.float64))
-        raw_value_arr = atom_signal_arr * atom_signal_arr * atom_len_arr
-        raw_density_arr = raw_value_arr / np.maximum(atom_len_arr, 1.0)
-
-        prefix_len = np.concatenate(([0], np.cumsum(atom_len_int_arr))).astype(np.int64)
-        prefix_mass = np.concatenate(([0.0], np.cumsum(mean_signal_arr * atom_len_arr))).astype(np.float64)
-        prefix_energy = np.concatenate(([0.0], np.cumsum(mean_signal_arr * mean_signal_arr * atom_len_arr))).astype(np.float64)
-        single_sur_value_arr = (mean_signal_arr * mean_signal_arr * atom_len_arr).astype(np.float64)
-
-        atom_indices_arr = np.arange(num_atoms, dtype=np.int64)
-        raw_fill_order = np.lexsort((atom_indices_arr, -raw_density_arr, -raw_value_arr))
-
-        def surrogate_value(start_idx: int, end_idx: int) -> float:
-            start = int(start_idx)
-            end = int(end_idx)
-            if end <= start:
-                return 0.0
-            total_len = float(prefix_len[end] - prefix_len[start])
-            if total_len <= 0.0:
-                return 0.0
-            mass = float(prefix_mass[end] - prefix_mass[start])
-            energy = float(prefix_energy[end] - prefix_energy[start])
-            projection = (mass * mass) / max(total_len, 1e-12)
-            return float(max(0.0, min(energy, (2.0 * projection) - energy)))
-
-        def action_runs(actions: Sequence[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-            actions_arr = np.asarray(actions, dtype=np.int8)
-            if actions_arr.size <= 0:
-                empty_i = np.empty((0,), dtype=np.int64)
-                empty_a = np.empty((0,), dtype=np.int8)
-                return empty_i, empty_i, empty_a, empty_i
-            changes = np.flatnonzero(actions_arr[1:] != actions_arr[:-1]).astype(np.int64) + 1
-            starts = np.concatenate((np.asarray([0], dtype=np.int64), changes))
-            ends = np.concatenate((changes, np.asarray([actions_arr.size], dtype=np.int64)))
-            run_actions = actions_arr[starts]
-            run_lens = prefix_len[ends] - prefix_len[starts]
-            return starts, ends, run_actions, run_lens
-
-        def collect_stats(actions: Sequence[int]) -> Tuple[Dict[str, float], List[int]]:
-            _starts, _ends, run_actions, run_lens = action_runs(actions)
-            raw_mask = run_actions == 2
-            surrogate_mask = run_actions == 1
-            drop_mask = run_actions == 0
-            raw_tokens = int(run_lens[raw_mask].sum()) if raw_mask.any() else 0
-            raw_regions = int(raw_mask.sum())
-            surrogate_tokens = int(run_lens[surrogate_mask].sum()) if surrogate_mask.any() else 0
-            surrogate_regions = int(surrogate_mask.sum())
-            drop_tokens = int(run_lens[drop_mask].sum()) if drop_mask.any() else 0
-            drop_regions = int(drop_mask.sum())
-            surrogate_lens = run_lens[surrogate_mask].astype(np.int64).tolist()
-            used_entries = int(raw_tokens) + int(surrogate_regions)
-            return (
-                {
-                    "ks_run_raw_tokens": int(raw_tokens),
-                    "ks_run_raw_regions": int(raw_regions),
-                    "ks_run_surrogate_regions": int(surrogate_regions),
-                    "ks_run_surrogate_tokens": int(surrogate_tokens),
-                    "ks_run_drop_tokens": int(drop_tokens),
-                    "ks_run_drop_regions": int(drop_regions),
-                    "ks_run_budget_entries": int(budget_entries),
-                    "ks_run_full_cost": int(full_cost),
-                    "ks_run_used_entries": int(used_entries),
-                    "ks_run_budget_gap": int(budget_entries) - int(used_entries),
-                    "ks_run_surrogate_mean_len": (
-                        float(sum(surrogate_lens) / len(surrogate_lens)) if surrogate_lens else 0.0
-                    ),
-                    "ks_run_surrogate_max_len": max(surrogate_lens) if surrogate_lens else 0,
-                },
-                surrogate_lens,
-            )
-
-        def materialize_actions(actions: Sequence[int]):
-            starts, ends, run_actions, _run_lens = action_runs(actions)
-            new_slices = [
-                (int(atom_start_arr[int(start_idx)]), int(atom_end_arr[int(end_idx) - 1]))
-                for start_idx, end_idx in zip(starts.tolist(), ends.tolist())
-            ]
-            new_selected = run_actions != 2
-            new_surrogate_lengths = np.where(run_actions == 0, 0, 1).astype(np.int64)
-            new_chunk_lengths = torch.tensor(
-                [end - start for start, end in new_slices],
-                device=device,
-                dtype=torch.long,
-            )
-            new_replace_mask = torch.tensor([new_selected.tolist()], device=device, dtype=torch.bool)
-            new_surrogate_lengths_tensor = torch.tensor(
-                [new_surrogate_lengths.tolist()],
-                device=device,
-                dtype=torch.long,
-            )
-            return new_slices, new_chunk_lengths, new_replace_mask, new_surrogate_lengths_tensor
-
-        if budget_entries >= full_cost:
-            actions = np.full((num_atoms,), 2, dtype=np.int8)
-            stats, _ = collect_stats(actions)
-            stats.update(
-                {
-                    "surrogate_kv_lambda": 0.0,
-                    "surrogate_kv_price_iterations": 0,
-                    "surrogate_kv_stack_merges": 0,
-                    "surrogate_kv_final_fill_atoms": 0,
-                    "surrogate_kv_final_fill_tokens": 0,
-                    "surrogate_kv_final_fill_value": 0.0,
-                    "surrogate_kv_solver_cost": int(full_cost),
-                }
-            )
-            self._last_allocator_stats = stats
-            return materialize_actions(actions)
-
-        Segment = Tuple[int, int, int, float, int]
-
-        def solve_for_price(price: float) -> Tuple[np.ndarray, int, int, float]:
-            stack: List[Segment] = []
-            merge_accepts = 0
-            raw_score_arr = raw_value_arr - float(price) * atom_len_arr
-            sur_score_arr = single_sur_value_arr - float(price)
-            for atom_idx in range(num_atoms):
-                atom_len = int(atom_len_int_arr[atom_idx])
-                raw_score = float(raw_score_arr[atom_idx])
-                sur_score = float(sur_score_arr[atom_idx])
-                if raw_score > 0.0 and raw_score >= sur_score:
-                    segment: Segment = (int(atom_idx), int(atom_idx + 1), 2, float(raw_score), int(atom_len))
-                elif sur_score > 0.0:
-                    segment = (int(atom_idx), int(atom_idx + 1), 1, float(sur_score), 1)
-                else:
-                    segment = (int(atom_idx), int(atom_idx + 1), 0, 0.0, 0)
-                stack.append(segment)
-                while len(stack) >= 2:
-                    left = stack[-2]
-                    right = stack[-1]
-                    if int(left[1]) != int(right[0]):
-                        break
-                    start_idx = int(left[0])
-                    end_idx = int(right[1])
-                    merged_score = float(surrogate_value(start_idx, end_idx)) - float(price)
-                    split_score = float(left[3]) + float(right[3])
-                    if merged_score <= split_score:
-                        break
-                    stack.pop()
-                    stack.pop()
-                    stack.append((start_idx, end_idx, 1, float(merged_score), 1))
-                    merge_accepts += 1
-            actions_arr = np.zeros((num_atoms,), dtype=np.int8)
-            used = 0
-            total_score = 0.0
-            for start_idx, end_idx, action, score, cost in stack:
-                actions_arr[int(start_idx) : int(end_idx)] = int(action)
-                used += int(cost)
-                total_score += float(score)
-            return actions_arr, int(used), int(merge_accepts), float(total_score)
-
-        raw_frontier_price = 0.0
-        raw_frontier_cost = 0
-        raw_frontier_count = 0
-        for atom_idx in raw_fill_order:
-            atom_idx = int(atom_idx)
-            atom_len = int(atom_len_int_arr[atom_idx])
-            if int(raw_frontier_cost) + int(atom_len) > int(budget_entries):
-                continue
-            raw_frontier_cost += int(atom_len)
-            raw_frontier_count += 1
-            raw_frontier_price = float(raw_density_arr[atom_idx])
-            if int(raw_frontier_cost) >= int(budget_entries):
-                break
-        if raw_frontier_count <= 0 and raw_density_arr.size:
-            raw_frontier_price = float(np.max(raw_density_arr))
-
-        best_price = float(raw_frontier_price)
-        best_actions, best_cost, best_merges, best_score = solve_for_price(best_price)
-        solve_calls = 1
-        price_iterations = 0
-
-        actions = np.asarray(best_actions, dtype=np.int8).copy()
-        current_cost = int(best_cost)
-        budget_trim_actions = 0
-        budget_trim_tokens = 0
-        budget_trim_value = 0.0
-
-        if int(current_cost) > int(budget_entries):
-            starts, ends, run_actions, _run_lens = action_runs(actions)
-            trim_candidates: List[Tuple[float, int, int, int, float]] = []
-            for start_idx, end_idx, action in zip(starts.tolist(), ends.tolist(), run_actions.tolist()):
-                start_idx = int(start_idx)
-                end_idx = int(end_idx)
-                action = int(action)
-                if action == 1:
-                    value = float(surrogate_value(start_idx, end_idx))
-                    trim_candidates.append((float(value), 1, start_idx, end_idx, float(value)))
-                elif action == 2:
-                    for atom_idx in range(start_idx, end_idx):
-                        atom_len = int(atom_len_int_arr[int(atom_idx)])
-                        value = float(raw_value_arr[int(atom_idx)])
-                        density = float(value / max(1, atom_len))
-                        trim_candidates.append((float(density), int(atom_len), int(atom_idx), int(atom_idx) + 1, value))
-            for _priority, freed, start_idx, end_idx, value in sorted(trim_candidates, key=lambda item: (item[0], item[1])):
-                if int(current_cost) <= int(budget_entries):
-                    break
-                if not np.any(actions[int(start_idx) : int(end_idx)]):
-                    continue
-                old_cost = int(atom_len_int_arr[int(start_idx) : int(end_idx)].sum()) if int(actions[int(start_idx)]) == 2 else 1
-                actions[int(start_idx) : int(end_idx)] = 0
-                current_cost -= int(old_cost)
-                budget_trim_actions += 1
-                budget_trim_tokens += int(prefix_len[int(end_idx)] - prefix_len[int(start_idx)])
-                budget_trim_value += float(value)
-
-        final_fill_atoms = 0
-        final_fill_tokens = 0
-        final_fill_value = 0.0
-        final_fill_from_surrogate = 0
-
-        def raw_upgrade_delta(actions_arr: np.ndarray, atom_idx: int) -> int:
-            action = int(actions_arr[int(atom_idx)])
-            atom_len = int(atom_len_int_arr[int(atom_idx)])
-            if action == 0:
-                return int(atom_len)
-            if action != 1:
-                return 10**9
-            left_sur = int(atom_idx) > 0 and int(actions_arr[int(atom_idx) - 1]) == 1
-            right_sur = int(atom_idx) + 1 < int(num_atoms) and int(actions_arr[int(atom_idx) + 1]) == 1
-            remaining_sur_regions = int(bool(left_sur)) + int(bool(right_sur))
-            return int(atom_len) + int(remaining_sur_regions) - 1
-
-        for atom_idx in raw_fill_order:
-            atom_idx = int(atom_idx)
-            if current_cost >= int(budget_entries):
-                break
-            if int(actions[atom_idx]) == 2:
-                continue
-            delta = int(raw_upgrade_delta(actions, atom_idx))
-            if delta <= 0 or current_cost + int(delta) > int(budget_entries):
-                continue
-            if int(actions[atom_idx]) == 1:
-                final_fill_from_surrogate += 1
-            atom_len = int(atom_len_int_arr[atom_idx])
-            actions[atom_idx] = 2
-            current_cost += int(delta)
-            final_fill_atoms += 1
-            final_fill_tokens += int(atom_len)
-            final_fill_value += float(raw_value_arr[atom_idx])
-
-        stats, _ = collect_stats(actions)
-        stats.update(
-            {
-                "surrogate_kv_lambda": float(best_price),
-                "surrogate_kv_price_iterations": int(price_iterations),
-                "surrogate_kv_solve_calls": int(solve_calls),
-                "surrogate_kv_stack_merges": int(best_merges),
-                "surrogate_kv_raw_frontier_cost": int(raw_frontier_cost),
-                "surrogate_kv_raw_frontier_atoms": int(raw_frontier_count),
-                "surrogate_kv_budget_trim_actions": int(budget_trim_actions),
-                "surrogate_kv_budget_trim_tokens": int(budget_trim_tokens),
-                "surrogate_kv_budget_trim_value": float(budget_trim_value),
-                "surrogate_kv_final_fill_atoms": int(final_fill_atoms),
-                "surrogate_kv_final_fill_tokens": int(final_fill_tokens),
-                "surrogate_kv_final_fill_value": float(final_fill_value),
-                "surrogate_kv_final_fill_from_surrogate": int(final_fill_from_surrogate),
-                "surrogate_kv_solver_cost": int(best_cost),
-                "surrogate_kv_solver_score": float(best_score),
-                "surrogate_kv_micro_len": int(micro_len),
-            }
+        atom_lengths = np.asarray([end - start for start, end in atom_spans], dtype=np.int64)
+        raw_local_scores = torch.clamp(
+            token_scores[0, int(base_start) : int(base_end)].detach().to(dtype=torch.float32),
+            min=0.0,
         )
-        self._last_allocator_stats = stats
-        return materialize_actions(actions)
+        residual_token_scores = getattr(self, "_last_projected_residual_token_scores", None)
+        if (
+            isinstance(residual_token_scores, torch.Tensor)
+            and residual_token_scores.ndim == token_scores.ndim
+            and residual_token_scores.shape[0] == token_scores.shape[0]
+            and residual_token_scores.shape[-1] >= int(base_end)
+        ):
+            surrogate_local_scores = torch.clamp(
+                residual_token_scores[0, int(base_start) : int(base_end)].detach().to(dtype=torch.float32),
+                min=0.0,
+            )
+        else:
+            surrogate_local_scores = raw_local_scores
+        atom_value = np.asarray(
+            [
+                float(
+                    surrogate_local_scores[int(start) - int(base_start) : int(end) - int(base_start)]
+                    .sum()
+                    .detach()
+                    .cpu()
+                    .item()
+                )
+                for start, end in atom_spans
+            ],
+            dtype=np.float64,
+        )
+        atom_raw_value = np.asarray(
+            [
+                float(
+                    raw_local_scores[int(start) - int(base_start) : int(end) - int(base_start)]
+                    .sum()
+                    .detach()
+                    .cpu()
+                    .item()
+                )
+                for start, end in atom_spans
+            ],
+            dtype=np.float64,
+        )
+        atom_raw_peak = np.asarray(
+            [
+                float(
+                    raw_local_scores[int(start) - int(base_start) : int(end) - int(base_start)]
+                    .max()
+                    .detach()
+                    .cpu()
+                    .item()
+                )
+                if int(end) > int(start)
+                else 0.0
+                for start, end in atom_spans
+            ],
+            dtype=np.float64,
+        )
+        atom_score = atom_raw_value + 0.25 * atom_raw_peak * np.maximum(1.0, atom_lengths.astype(np.float64))
+        raw_positive = atom_score[atom_score > 0.0]
+        residual_positive = atom_value[atom_value > 0.0]
+        if raw_positive.size and residual_positive.size:
+            residual_to_raw_scale = float(np.median(raw_positive) / max(float(np.median(residual_positive)), 1e-12))
+        else:
+            residual_to_raw_scale = 1.0
+
+        budget_entries = max(1, int(target_compressed_tokens) - int(sink_len) - int(recent_len))
+        full_cost = int(atom_lengths.sum())
+        raw_order = np.lexsort((np.arange(atom_count), -atom_score))
+        actions = np.zeros((atom_count,), dtype=np.int8)
+        current_cost = 0
+        for atom_idx in raw_order.tolist():
+            atom_idx = int(atom_idx)
+            atom_len = int(atom_lengths[atom_idx])
+            if int(current_cost) + int(atom_len) > int(budget_entries):
+                continue
+            actions[atom_idx] = 2
+            current_cost += int(atom_len)
+
+        residual_dirs = getattr(self, "_last_projected_residual_directions", None)
+        if not (
+            isinstance(residual_dirs, torch.Tensor)
+            and residual_dirs.ndim == 3
+            and residual_dirs.shape[0] == 1
+            and residual_dirs.shape[1] >= int(base_end)
+        ):
+            residual_dirs = None
+
+        atom_value_prefix = np.concatenate(([0.0], np.cumsum(atom_value, dtype=np.float64)))
+        atom_length_prefix = np.concatenate(([0], np.cumsum(atom_lengths, dtype=np.int64)))
+        atom_density = atom_value / np.maximum(1, atom_lengths).astype(np.float64)
+        vector_prefix = None
+        weight_prefix = None
+        if residual_dirs is not None:
+            local_dirs = residual_dirs[0, int(base_start) : int(base_end)].to(device=device, dtype=torch.float32)
+            local_weights = surrogate_local_scores.to(device=device, dtype=torch.float32).clamp_min(1e-8)
+            vectors = []
+            weights = []
+            for start, end in atom_spans:
+                rel_start = int(start) - int(base_start)
+                rel_end = int(end) - int(base_start)
+                weight = local_weights[rel_start:rel_end]
+                direction = local_dirs[rel_start:rel_end]
+                vectors.append((direction * weight.view(-1, 1)).sum(dim=0))
+                weights.append(weight.sum())
+            if vectors:
+                atom_vectors = torch.stack(vectors, dim=0)
+                atom_weights = torch.stack(weights, dim=0)
+                vector_prefix = torch.cat(
+                    [torch.zeros_like(atom_vectors[:1]), atom_vectors.cumsum(dim=0)],
+                    dim=0,
+                )
+                weight_prefix = torch.cat(
+                    [torch.zeros_like(atom_weights[:1]), atom_weights.cumsum(dim=0)],
+                    dim=0,
+                )
+
+        def packet_value(start_atom: int, end_atom: int) -> tuple[float, float, float]:
+            start_atom = int(start_atom)
+            end_atom = int(end_atom)
+            if end_atom <= start_atom or start_atom < 0 or end_atom > atom_count:
+                return 0.0, 0.0, 0.0
+            mass = float(atom_value_prefix[end_atom] - atom_value_prefix[start_atom])
+            token_len = int(atom_length_prefix[end_atom] - atom_length_prefix[start_atom])
+            if mass <= 0.0 or token_len <= 0:
+                return 0.0, mass, 0.0
+            if vector_prefix is None or weight_prefix is None:
+                density = atom_density[start_atom:end_atom]
+                coherence = float(density.mean() / max(float(density.max()), 1e-9))
+            else:
+                direction_sum = vector_prefix[end_atom] - vector_prefix[start_atom]
+                denom = (weight_prefix[end_atom] - weight_prefix[start_atom]).clamp_min(1e-8)
+                coherence = float((direction_sum.norm() / denom).clamp(0.0, 1.0).detach().cpu().item())
+            return float(mass * max(0.0, coherence) * residual_to_raw_scale), mass, float(coherence)
+
+        def mask_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+            runs = []
+            cursor = 0
+            while cursor < int(mask.size):
+                while cursor < int(mask.size) and not bool(mask[cursor]):
+                    cursor += 1
+                start = cursor
+                while cursor < int(mask.size) and bool(mask[cursor]):
+                    cursor += 1
+                if cursor > start:
+                    runs.append((int(start), int(cursor)))
+            return runs
+
+        candidates = []
+        max_packet_atoms = max(1, int(math.ceil(float(max(1, int(self.chunk_size))) / float(max(1, int(micro_len))))))
+        for run_start, run_end in mask_runs(actions == 0):
+            cursor = int(run_start)
+            while cursor < int(run_end):
+                left = int(cursor)
+                right = min(int(run_end), int(left) + int(max_packet_atoms))
+                cursor = int(right)
+                if float(atom_value_prefix[right] - atom_value_prefix[left]) <= 0.0:
+                    continue
+                value, mass, coherence = packet_value(left, right)
+                if value <= 0.0:
+                    continue
+                packet_ids = tuple(range(int(left), int(right)))
+                token_count = int(atom_length_prefix[int(right)] - atom_length_prefix[int(left)])
+                candidates.append(
+                    (
+                        float(value),
+                        float(coherence),
+                        int(token_count),
+                        int(left),
+                        int(right),
+                        packet_ids,
+                    )
+                )
+        candidates.sort(key=lambda item: (float(item[0]), float(item[1]), -int(item[2])), reverse=True)
+
+        occupied = np.zeros((atom_count,), dtype=bool)
+        selected_packets: list[tuple[int, int, tuple[int, ...], float, float]] = []
+        selected_value = 0.0
+        selected_coherence = []
+        rejected_overlap = 0
+        rejected_budget = 0
+        rejected_value = 0
+        for value, coherence, _token_count, start_atom, end_atom, packet_ids in candidates:
+            packet_arr = np.asarray(packet_ids, dtype=np.int64)
+            if packet_arr.size <= 0 or bool(occupied[packet_arr].any()):
+                rejected_overlap += 1
+                continue
+            if int(current_cost) + 1 > int(budget_entries):
+                payer = None
+                kept = np.flatnonzero(actions == 2).astype(np.int64)
+                if kept.size:
+                    for atom_idx in kept[np.argsort(atom_score[kept])].tolist():
+                        atom_idx = int(atom_idx)
+                        if not bool(occupied[atom_idx]):
+                            payer = atom_idx
+                            break
+                if payer is None:
+                    rejected_budget += 1
+                    continue
+                if float(value) <= float(atom_score[payer]):
+                    rejected_value += 1
+                    continue
+                actions[payer] = 0
+                current_cost -= int(atom_lengths[payer])
+            actions[packet_arr] = 1
+            occupied[packet_arr] = True
+            current_cost += 1
+            selected_packets.append((int(start_atom), int(end_atom), tuple(packet_ids), float(value), float(coherence)))
+            selected_value += float(value)
+            selected_coherence.append(float(coherence))
+
+        for atom_idx in raw_order.tolist():
+            atom_idx = int(atom_idx)
+            if int(actions[atom_idx]) != 0 or bool(occupied[atom_idx]):
+                continue
+            atom_len = int(atom_lengths[atom_idx])
+            if int(current_cost) + int(atom_len) > int(budget_entries):
+                continue
+            actions[atom_idx] = 2
+            current_cost += int(atom_len)
+            if int(current_cost) >= int(budget_entries):
+                break
+
+        packet_by_start = {start: (end, packet_ids) for start, end, packet_ids, _value, _coh in selected_packets}
+        output = []
+        idx = 0
+        while idx < atom_count:
+            if idx in packet_by_start:
+                end_idx, packet_ids = packet_by_start[idx]
+                output.append((int(atom_spans[idx][0]), int(atom_spans[end_idx - 1][1]), 1, packet_ids))
+                idx = int(end_idx)
+                continue
+            action = int(actions[idx])
+            end_idx = idx + 1
+            while end_idx < atom_count and int(actions[end_idx]) == action and end_idx not in packet_by_start:
+                end_idx += 1
+            output.append((int(atom_spans[idx][0]), int(atom_spans[end_idx - 1][1]), action, None))
+            idx = end_idx
+
+        new_slices = [(start, end) for start, end, _action, _packet in output]
+        new_lengths_np = np.asarray([end - start for start, end, _action, _packet in output], dtype=np.int64)
+        selected_np = np.asarray([action != 2 for _start, _end, action, _packet in output], dtype=bool)
+        surrogate_lengths_np = np.asarray([1 if action == 1 else 0 for _start, _end, action, _packet in output], dtype=np.int64)
+        output_lengths = np.where(selected_np, surrogate_lengths_np, new_lengths_np).astype(np.int64)
+        selected_indices = np.flatnonzero(selected_np).astype(np.int64)
+        surrogate_indices = selected_indices[surrogate_lengths_np[selected_indices] > 0]
+        prototype_token_indices = {}
+        for chunk_idx in surrogate_indices.tolist():
+            packet = output[int(chunk_idx)][3]
+            if packet is None:
+                continue
+            prototype_token_indices[int(chunk_idx)] = [
+                int(token)
+                for atom_idx in packet
+                for token in range(int(atom_spans[int(atom_idx)][0]), int(atom_spans[int(atom_idx)][1]))
+            ]
+
+        self._last_fast_pack_plan = {
+            "chunk_slices": tuple(new_slices),
+            "selected_mask_list": [bool(v) for v in selected_np.tolist()],
+            "output_length_list": [int(v) for v in output_lengths.tolist()],
+            "raw_spans": [
+                (int(new_slices[i][0]), int(new_slices[i][1]))
+                for i in range(len(new_slices))
+                if not bool(selected_np[i])
+            ],
+            "selected_chunk_indices_list": [int(v) for v in selected_indices.tolist()],
+            "surrogate_chunk_indices_list": [int(v) for v in surrogate_indices.tolist()],
+            "surrogate_lengths_list": [int(surrogate_lengths_np[int(i)]) for i in surrogate_indices.tolist()],
+            "prototype_token_indices": prototype_token_indices,
+        }
+        raw_tokens = int(sum(end - start for start, end, action, _packet in output if action == 2))
+        surrogate_tokens = int(sum(end - start for start, end, action, _packet in output if action == 1))
+        drop_tokens = int(sum(end - start for start, end, action, _packet in output if action == 0))
+        self._last_allocator_stats = {
+            "surrogate_kv_allocator": "projected_residual_exchange",
+            "surrogate_kv_projected_residual_allocator": 1,
+            "surrogate_kv_projected_candidate_count": int(len(candidates)),
+            "surrogate_kv_projected_selected_packets": int(len(selected_packets)),
+            "surrogate_kv_projected_selected_value": float(selected_value),
+            "surrogate_kv_projected_residual_to_raw_scale": float(residual_to_raw_scale),
+            "surrogate_kv_projected_mean_coherence": (
+                float(sum(selected_coherence) / len(selected_coherence)) if selected_coherence else 0.0
+            ),
+            "surrogate_kv_projected_rejected_overlap": int(rejected_overlap),
+            "surrogate_kv_projected_rejected_budget": int(rejected_budget),
+            "surrogate_kv_projected_rejected_value": int(rejected_value),
+            "ks_run_raw_tokens": int(raw_tokens),
+            "ks_run_raw_regions": int(sum(1 for _start, _end, action, _packet in output if action == 2)),
+            "ks_run_surrogate_regions": int(len(selected_packets)),
+            "ks_run_surrogate_tokens": int(surrogate_tokens),
+            "ks_run_drop_tokens": int(drop_tokens),
+            "ks_run_drop_regions": int(sum(1 for _start, _end, action, _packet in output if action == 0)),
+            "ks_run_budget_entries": int(budget_entries),
+            "ks_run_full_cost": int(full_cost),
+            "ks_run_used_entries": int(raw_tokens) + int(len(selected_packets)),
+            "ks_run_budget_gap": int(budget_entries) - int(raw_tokens) - int(len(selected_packets)),
+        }
+        return (
+            new_slices,
+            torch.as_tensor(new_lengths_np, device=device, dtype=torch.long),
+            torch.as_tensor(selected_np[None, :], device=device, dtype=torch.bool),
+            torch.as_tensor(surrogate_lengths_np[None, :], device=device, dtype=torch.long),
+        )
 
     def _past_token_scores(
         self,
@@ -5512,6 +5546,9 @@ class SurKVCluster:
         self._last_headwise_precomputed_pooled_scores = None
         self._last_surrogate_residual_head_token_scores = None
         self._last_andpro_mean_fusion_head_scores = None
+        self._last_projected_residual_directions = None
+        self._last_projected_residual_token_scores = None
+        self._last_projected_attention_head_scores = None
         if query_states.shape[1] == key_states.shape[1]:
             attn_weights = torch.matmul(query_states[..., -recent_len:, :], key_states.transpose(2, 3)) / math.sqrt(head_dim)
         else:
@@ -5557,10 +5594,16 @@ class SurKVCluster:
                 ).to(dtype=torch.float32)
             score_stats = {
                 "surrogate_kv_score_attention": 1,
-                "surrogate_kv_score_andpro": 0,
             }
         elif score_method in {"andpro", "anchor_projection", "projection", "proj"}:
             head_token_scores, score_stats = self._andpro_head_token_scores(
+                attn_probs=attn_probs,
+                value_states=value_states,
+                query_head_count=query_states.shape[1],
+                past_len=past_len,
+            )
+        elif score_method in {"projected_residual", "residual_projection", "projection_residual"}:
+            head_token_scores, score_stats = self._projected_residual_head_token_scores(
                 attn_probs=attn_probs,
                 value_states=value_states,
                 query_head_count=query_states.shape[1],
@@ -5609,8 +5652,22 @@ class SurKVCluster:
                 past_len=past_len,
                 sink_len=sink_len,
             )
+        projected_residual_token_scores = None
+        if score_method in {"projected_residual", "residual_projection", "projection_residual"}:
+            projected_residual_token_scores = token_scores.detach()
+            score_stats["surrogate_kv_projected_raw_score_attention"] = 0
+            score_stats["surrogate_kv_projected_raw_score_hybrid"] = 0
+            self._last_projected_residual_token_scores = projected_residual_token_scores.detach()
         score_stats.update(fusion_stats)
-        if score_method in {"andpro", "anchor_projection", "projection", "proj"}:
+        if score_method in {"projected_residual", "residual_projection", "projection_residual"}:
+            self._last_surrogate_residual_head_token_scores = pooled_scores.detach()
+            self._last_surrogate_residual_token_scores = (
+                projected_residual_token_scores.detach()
+                if isinstance(projected_residual_token_scores, torch.Tensor)
+                else token_scores.detach()
+            )
+            score_stats["surrogate_kv_projected_two_component_score"] = 1
+        elif score_method in {"andpro", "anchor_projection", "projection", "proj"}:
             attention_head_scores = getattr(self, "_last_andpro_attention_head_scores", None)
             if (
                 _SURKV_ANDPRO_SURROGATE_SCORE_SOURCE in {"attention", "attn", "snap", "snapkv"}
@@ -5657,6 +5714,142 @@ class SurKVCluster:
             self._last_layer_budget_signal = float(signal.detach().cpu().item())
 
         return token_scores
+
+    def _projected_residual_head_token_scores(
+        self,
+        *,
+        attn_probs,
+        value_states,
+        query_head_count: int,
+        past_len: int,
+    ):
+        probs = attn_probs.to(dtype=torch.float32)
+        values = value_states.to(dtype=torch.float32)
+        past_values = values[:, :, : int(past_len), :]
+
+        if probs.dim() == 4:
+            attn_past = probs[:, :, :, : int(past_len)]
+            attention_scores = attn_past.sum(dim=-2)
+            value_by_query = past_values
+        else:
+            batch, key_heads, groups, recent_tokens, _tokens = probs.shape
+            attn_past = probs[..., : int(past_len)]
+            attention_scores = attn_past.sum(dim=-2).reshape(batch, int(query_head_count), int(past_len))
+            value_by_query = (
+                past_values[:, :, None, :, :]
+                .expand(batch, key_heads, groups, int(past_len), values.shape[-1])
+                .reshape(batch, int(query_head_count), int(past_len), values.shape[-1])
+            )
+
+        attention_scores = torch.nan_to_num(attention_scores, nan=0.0, posinf=0.0, neginf=0.0)
+        self._last_projected_attention_head_scores = attention_scores.detach()
+
+        flat_attn = attn_past.reshape(-1, 1, int(past_len))
+        if self.pooling == "avgpool":
+            pooled_attn = F.avg_pool1d(
+                flat_attn,
+                kernel_size=self.kernel_size,
+                padding=self.kernel_size // 2,
+                stride=1,
+            )
+        elif self.pooling == "maxpool":
+            pooled_attn = F.max_pool1d(
+                flat_attn,
+                kernel_size=self.kernel_size,
+                padding=self.kernel_size // 2,
+                stride=1,
+            )
+        else:
+            raise ValueError(f"Unsupported pooling method: {self.pooling}")
+        attn_for_projection = pooled_attn.view_as(attn_past)
+        if attn_for_projection.dim() == 5:
+            attn_for_projection = attn_for_projection.reshape(
+                attn_for_projection.shape[0],
+                int(query_head_count),
+                attn_for_projection.shape[-2],
+                attn_for_projection.shape[-1],
+            )
+
+        atom_len = max(1, int(self.spec.dynamic_anchor_width or 4))
+        atom_count = int(math.ceil(float(max(1, int(past_len))) / float(atom_len)))
+        padded_len = int(atom_count) * int(atom_len)
+        pad_len = int(padded_len) - int(past_len)
+        if pad_len > 0:
+            attn_for_projection = F.pad(attn_for_projection, (0, int(pad_len)))
+            value_by_query = F.pad(value_by_query, (0, 0, 0, int(pad_len)))
+        value_chunks = value_by_query.reshape(
+            value_by_query.shape[0],
+            value_by_query.shape[1],
+            int(atom_count),
+            int(atom_len),
+            value_by_query.shape[-1],
+        )
+        candidate_mask = torch.ones((int(atom_count),), device=value_by_query.device, dtype=torch.bool)
+        if int(atom_count) > 0:
+            candidate_mask[0] = False
+        projection_chunks = torch.zeros(
+            (
+                value_by_query.shape[0],
+                value_by_query.shape[1],
+                int(atom_count),
+            ),
+            device=value_by_query.device,
+            dtype=torch.float32,
+        )
+        for query_idx in range(int(attn_for_projection.shape[-2])):
+            query_weights = attn_for_projection[:, :, int(query_idx), :].reshape(
+                value_by_query.shape[0],
+                value_by_query.shape[1],
+                int(atom_count),
+                int(atom_len),
+            )
+            chunk_values = (query_weights.unsqueeze(-1) * value_chunks).sum(dim=-2)
+            dropped_direction = (chunk_values * candidate_mask.view(1, 1, -1, 1)).sum(dim=-2)
+            projection_chunks += (chunk_values * dropped_direction.unsqueeze(-2)).sum(dim=-1)
+        projection_chunks = projection_chunks.masked_fill(~candidate_mask.view(1, 1, -1), 0.0)
+        raw_scores = projection_chunks.unsqueeze(-1).expand(
+            projection_chunks.shape[0],
+            projection_chunks.shape[1],
+            int(atom_count),
+            int(atom_len),
+        ).reshape(projection_chunks.shape[0], projection_chunks.shape[1], int(padded_len))[..., : int(past_len)]
+        raw_scores = torch.nan_to_num(raw_scores, nan=0.0, posinf=0.0, neginf=0.0)
+        projected_scores = raw_scores
+        fallback_mask = projected_scores.amax(dim=-1, keepdim=True) <= 1e-8
+        attention_shifted = torch.clamp(attention_scores - attention_scores.amin(dim=-1, keepdim=True), min=0.0)
+        projected_scores = torch.where(fallback_mask, attention_shifted, projected_scores)
+
+        direction_weights = torch.clamp(projected_scores, min=0.0) + attention_shifted * 1e-6
+        direction_denom = direction_weights.sum(dim=1, keepdim=False).unsqueeze(-1).clamp_min(1e-9)
+        residual_direction = (
+            direction_weights.unsqueeze(-1) * value_by_query[:, :, : int(past_len), :]
+        ).sum(dim=1) / direction_denom
+        self._last_projected_residual_directions = F.normalize(
+            residual_direction,
+            dim=-1,
+            eps=1e-6,
+        ).detach()
+
+        finite_raw = raw_scores[torch.isfinite(raw_scores)]
+        raw_mean = float(finite_raw.mean().detach().cpu().item()) if finite_raw.numel() else 0.0
+        raw_negative = (
+            float((finite_raw < 0).to(dtype=torch.float32).mean().detach().cpu().item())
+            if finite_raw.numel()
+            else 0.0
+        )
+        projected_positive = (
+            float((raw_scores > 0).to(dtype=torch.float32).mean().detach().cpu().item())
+            if raw_scores.numel()
+            else 0.0
+        )
+        return projected_scores, {
+            "surrogate_kv_score_attention": 0,
+            "surrogate_kv_score_andpro": 0,
+            "surrogate_kv_score_projected_residual": 1,
+            "surrogate_kv_score_projection_raw_mean": raw_mean,
+            "surrogate_kv_score_projection_negative_fraction": raw_negative,
+            "surrogate_kv_score_projection_positive_fraction": projected_positive,
+        }
 
     def _andpro_head_token_scores(self, *, attn_probs, value_states, query_head_count: int, past_len: int):
         probs = attn_probs.to(dtype=torch.float32)
@@ -6158,6 +6351,67 @@ class SurKVCluster:
                 if not bool(selected_any.all().item()):
                     active_region_indices = torch.nonzero(selected_any, as_tuple=False).flatten()
                     active_slice_indices_list = [int(idx) for idx in active_region_indices.detach().cpu().tolist()]
+
+        prototype_token_indices = (getattr(self, "_last_fast_pack_plan", {}) or {}).get("prototype_token_indices")
+        if (
+            isinstance(prototype_token_indices, dict)
+            and active_slice_indices_list is not None
+            and active_slice_indices_list
+        ):
+            active_keys = []
+            active_values = []
+            for region_idx in active_slice_indices_list:
+                token_ids = prototype_token_indices.get(int(region_idx))
+                if not token_ids:
+                    start, end = chunk_slices[int(region_idx)]
+                    token_ids = list(range(int(start), int(end)))
+                token_index = torch.as_tensor(token_ids, device=device, dtype=torch.long)
+                if token_index.numel() <= 0:
+                    active_keys.append(key_states.new_zeros((bsz, heads, head_dim), dtype=torch.float32))
+                    active_values.append(value_states.new_zeros((bsz, heads, head_dim), dtype=torch.float32))
+                    continue
+                key_chunk = key_states.index_select(2, token_index).to(dtype=torch.float32)
+                value_chunk = value_states.index_select(2, token_index).to(dtype=torch.float32)
+                score_mass = torch.clamp(
+                    token_scores.index_select(1, token_index).to(dtype=torch.float32),
+                    min=1e-6,
+                )
+                score_weights = score_mass.view(bsz, 1, -1, 1)
+                denom = score_mass.sum(dim=1).clamp_min(1e-6).view(bsz, 1, 1)
+                if surrogate_mode in _KEY_WEIGHTED_SURROGATE_MODES:
+                    key_proto = (key_chunk * score_weights).sum(dim=2) / denom
+                elif surrogate_mode in _NORM_RESTORED_KEY_MODES:
+                    key_proto = _restore_mean_key_norm(key_chunk.mean(dim=2), key_chunk, token_dim=2)
+                elif surrogate_mode in _PIVOT_KEY_MODES:
+                    pivot_rel = score_mass.argmax(dim=1)
+                    pivot_index = pivot_rel.view(bsz, 1, 1, 1).expand(bsz, heads, 1, head_dim)
+                    key_proto = key_chunk.gather(dim=2, index=pivot_index).squeeze(2)
+                else:
+                    key_proto = key_chunk.mean(dim=2)
+                if surrogate_mode in _VALUE_WEIGHTED_SURROGATE_MODES:
+                    value_proto = (value_chunk * score_weights).sum(dim=2) / denom
+                else:
+                    value_proto = value_chunk.mean(dim=2)
+                if surrogate_mode in _RMS_RESTORED_VALUE_MODES:
+                    value_proto = _restore_rms_value_norm(value_proto, value_chunk, token_dim=2)
+                active_keys.append(key_proto)
+                active_values.append(value_proto)
+            proto_key_bank = torch.stack(active_keys, dim=2).to(dtype=key_states.dtype)
+            proto_value_bank = torch.stack(active_values, dim=2).to(dtype=value_states.dtype)
+            proto_key_bank, proto_value_bank = self._scatter_active_prototype_bank(
+                proto_key_bank=proto_key_bank,
+                proto_value_bank=proto_value_bank,
+                active_region_indices=active_region_indices,
+                full_region_count=full_region_count,
+            )
+            return (
+                proto_key_bank,
+                proto_value_bank,
+                None,
+                None,
+                None,
+                None,
+            )
 
         # Raw rescue allocators may introduce 4-token raw boundaries while all
         # surrogate spans remain on the 8-token grid.  Prototype construction
