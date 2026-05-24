@@ -8,6 +8,11 @@ build/
 *.egg-info/
 outputs/
 results/
+!results/
+!results/**/
+!results/**/*.csv
+!results/**/*.md
+!results/**/*.png
 logs/
 
 # Keep dataset slots in the repo, but never commit local benchmark data.

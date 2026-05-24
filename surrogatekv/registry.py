@@ -1,14 +1,25 @@
 from __future__ import annotations
 
-from .registry_base import MethodSpec
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class MethodSpec:
+    name: str
+    mode: str
+    surrogate_mode: str = "norm_rms_mean"
+    dynamic_regioning: bool = True
+    dynamic_allocator: str = "surrogate_kv"
+    dynamic_surrogate_variant: str = ""
+    dynamic_anchor_width: int = 4
+    score_method: str = "attention"
+    head_score_fusion: str = "mean"
 
 
 SURROGATE_KV = MethodSpec(
     name="SurrogateKV",
     mode="surrogate_kv",
-    direct_strategy="local",
     surrogate_mode="norm_rms_mean",
-    selection_strategy="dynamic",
     dynamic_regioning=True,
     dynamic_allocator="surrogate_kv",
     dynamic_anchor_width=4,
@@ -17,9 +28,7 @@ SURROGATE_KV = MethodSpec(
 SURROGATE_KV_ADA = MethodSpec(
     name="SurrogateKV-Ada",
     mode="surrogate_kv_ada",
-    direct_strategy="local",
     surrogate_mode="norm_rms_mean",
-    selection_strategy="dynamic",
     dynamic_regioning=True,
     dynamic_allocator="surrogate_kv",
     dynamic_anchor_width=4,
@@ -30,9 +39,7 @@ SURROGATE_KV_ADA = MethodSpec(
 SURROGATE_KV_DYNAMIC = MethodSpec(
     name="SurrogateKV-Dynamic",
     mode="surrogate_kv_dynamic_layer",
-    direct_strategy="local",
     surrogate_mode="norm_rms_mean",
-    selection_strategy="dynamic",
     dynamic_regioning=True,
     dynamic_allocator="surrogate_kv",
     dynamic_anchor_width=4,
@@ -78,6 +85,7 @@ METHOD_TO_MODE.update(
 
 __all__ = [
     "METHOD_TO_MODE",
+    "MethodSpec",
     "MODE_TO_SPEC",
     "SUPPORTED_SPECS",
     "SURROGATE_KV",

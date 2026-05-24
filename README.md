@@ -1,35 +1,70 @@
 # SurrogateKV
 
-SurrogateKV is the standalone repository for the paper-facing runtime. The
-Python package is named `surrogatekv` so the public code reads like the method
-name, while benchmark harnesses can still use the shorter `surkv` method alias.
+Official implementation and result exports for **SurrogateKV**, a KV-cache
+compression method that represents each non-recent cache region as raw KV
+tokens, a single surrogate KV pair, or a dropped region under a fixed cache
+budget.
 
-```python
-from surrogatekv import SurKVCluster, SURROGATEKV_METHOD_TO_MODE
+SurrogateKV keeps compressed cache entries in the standard KV format, so the
+decoder can use ordinary attention after prefill-time cache packing. The same
+region-level allocator is used across the SurrogateKV variants, with different
+budget/salience profiles for SnapKV-, AdaKV-, and DynamicKV-style settings.
+
+## Highlights
+
+- **Region-level representation choice:** allocates each cache region to raw,
+  surrogate, or dropped storage rather than only retaining or evicting tokens.
+- **Compact surrogate targets:** replaces selected evicted regions with one
+  norm-restored KV prototype.
+- **Standard decoding path:** packed raw entries and surrogate entries are both
+  ordinary KV pairs.
+- **Paper-facing artifacts:** includes the public runtime, LongBench entry
+  points, compact CSV result exports, and selected heatmap figures.
+
+## News
+
+- The codebase has been cleaned into a standalone paper repository.
+- Compact LongBench and Needle-in-a-Haystack result exports are available under
+  `results/`.
+
+## Repository Layout
+
+```text
+surrogatekv/
+  core.py                # SurKVCluster public runtime entry point
+  registry.py            # method registry and aliases
+  schedule.py            # layer-budget schedules
+  runtime/
+    region_allocator.py  # raw / surrogate / drop region allocator
+    cache_pipeline.py    # scoring, packing, stats, layout metadata
+    prototype_bank.py    # surrogate KV prototype construction
+    layer_budget.py      # cross-layer budget coordination
+    headwise_runtime.py  # headwise Ada/GQA cache path
+    common.py            # shared flags and tensor helpers
+run/
+  longbench/             # LongBench prediction/evaluation entry points
+results/
+  longbench/             # compact LongBench CSV exports
+  niah/                  # Needle-in-a-Haystack CSV exports
+  images/                # selected heatmaps and figures
+data/
+  LongBench/             # local LongBench JSONL files, not committed
 ```
 
-## Layout
+Raw datasets, model weights, full generations, logs, local scratch scripts, and
+manuscript sources are intentionally kept outside this repository.
 
-- `surrogatekv/`: flat runtime package for the paper-facing implementation
-- `surrogatekv/core.py`: cache update orchestration
-- `surrogatekv/methods.py`: method specs split by baseline profile
-  (`surrogatekv-snap`, `surrogatekv-ada`, `surrogatekv-dynamic`,
-  `surrogatekv-pyramid`)
-- `surrogatekv/registry.py`: method registry assembled from `surrogatekv/methods.py`
-- `run/longbench/`: LongBench prediction, evaluation, and example launch
-  scripts, matching the shape of external reference repos such as DynamicKV
-- `data/`: empty dataset slots, kept only as public-repo placeholders
-
-This repository keeps the paper-facing method code and minimal runnable
-LongBench entrypoints together. Local scratch scripts, model weights, logs, and
-generated outputs should still live outside this repo in the experiment
-workspace.
-
-## Install
+## Installation
 
 ```bash
-python -m pip install -e /path/to/SurrogateKV
+git clone <repo-url> SurrogateKV
+cd SurrogateKV
+python -m pip install -e .
 ```
+
+The runtime expects PyTorch and NumPy. Benchmark runners additionally require
+the model/evaluation stack used by the experiment workspace, such as
+`transformers`, `datasets`, `rouge`, `jieba`, and `fuzzywuzzy`.
 
 Quick import check:
 
@@ -38,54 +73,126 @@ python - <<'PY'
 from surrogatekv import SurKVCluster, SURROGATEKV_METHOD_TO_MODE
 
 print(sorted(SURROGATEKV_METHOD_TO_MODE))
+cluster = SurKVCluster(mode="surrogate_kv")
+print(cluster.mode)
 PY
 ```
 
-LongBench example, after placing JSONL files under `data/LongBench/`:
+## Supported Methods
+
+| Method name | Internal mode | Description |
+| --- | --- | --- |
+| `SurrogateKV`, `SurrogateKV-Snap` | `surrogate_kv` | Surrogate allocation with SnapKV-style local scoring. |
+| `SurrogateKV-Ada` | `surrogate_kv_ada` | Surrogate allocation with head-adaptive budget use. |
+| `SurrogateKV-Dynamic` | `surrogate_kv_dynamic_layer` | Surrogate allocation with layer-adaptive budget use. |
+
+Common lowercase aliases such as `surkv`, `surkv-ada`, and `surkv-dynamic` are
+available through `SURROGATEKV_METHOD_TO_MODE`.
+
+## Using the Runtime
+
+`SurKVCluster` is intended to be called from an attention hook or KV-cache
+adapter after prefill scores are available.
+
+```python
+from surrogatekv import SurKVCluster
+
+cluster = SurKVCluster(
+    mode="surrogate_kv_ada",
+    window_size=8,
+    max_capacity_prompt=512,
+    kernel_size=7,
+    chunk_size=16,
+)
+
+compressed_k, compressed_v = cluster.update_kv(
+    key_states,
+    query_states,
+    value_states,
+    attention_mask=None,
+    num_key_value_groups=num_key_value_groups,
+)
+```
+
+## LongBench
+
+The LongBench scripts mirror the lightweight entry-point style used by common
+KV-cache compression repositories. In this local setup, prediction dispatches to
+the surrounding SurKV experiment workspace through `SURKV_WORKSPACE_ROOT`.
 
 ```bash
-export SURKV_WORKSPACE_ROOT=/path/to/SurKV-experiment-workspace
-python run/longbench/pred.py \
-  --dataset qasper \
-  --data_file data/LongBench/qasper.jsonl \
-  --save_dir results \
-  --model_path /path/to/model \
-  --method SurrogateKV-Ada \
-  --max_capacity_prompts 512
+export SURKV_WORKSPACE_ROOT=/path/to/SurKV
+export DATA_DIR=/path/to/LongBench
+export MODEL_PATH=/path/to/meta-llama--Meta-Llama-3-8B-Instruct
+export METHOD=SurrogateKV
+export KV_BUDGETS=128,512
+export DATASETS_CSV=qasper,multifieldqa_en,hotpotqa
+
+bash run/longbench/scripts/run_llama/run_llama3_8b_instruct_surkv.sh
 ```
 
-## Integration
+Evaluate saved predictions:
 
-SurrogateKV is not a fork of KVCache-Factory or KVPress. External harnesses
-should import this package and connect it through a small adapter:
-
-```text
-benchmark harness
-  -> attention hook / KV adapter
-  -> import surrogatekv
-  -> SurKVCluster.update_kv(...)
+```bash
+python run/longbench/eval.py \
+  --results_dir runs/longbench \
+  --datasets qasper,multifieldqa_en,hotpotqa \
+  --methods SurrogateKV,SurrogateKV-Ada,SurrogateKV-Dynamic
 ```
 
-In the local experiment workspace, benchmark orchestration and compatibility
-tools live outside this repo:
+## Result Exports
 
-```text
-run/longbench/pred.py
-  -> ../../tools/run_surkv_longbench.py
-../../tools/run_surkv_ruler.py
-../../tools/longbench_baselines.py
-../../tools/ruler_baselines.py
-```
+This repository includes compact CSV exports for representative paper figures
+and tables. See `results/README.md` for the source workspace paths and file
+descriptions.
 
-The KVCache-Factory bridge also stays outside this repository so the SurrogateKV
-repo remains publishable as the method implementation itself.
+### LongBench, Llama-3-8B-Instruct, KV Budget 512
 
-## Notes
+| Method | Avg | Score vs FullKV |
+| --- | ---: | ---: |
+| FullKV | 41.92 | 100.00 |
+| H2O | 39.68 | 94.65 |
+| SnapKV | 40.26 | 96.04 |
+| PyramidKV | 40.18 | 95.84 |
+| DynamicKV | 40.60 | 96.86 |
+| SurrogateKV | 40.88 | 97.52 |
 
-- Keep only source code, minimal packaging files, DynamicKV-style LongBench
-  entrypoints, and empty data slots here.
-- Do not commit model weights, datasets, experiment logs, summaries, plots, or
-  workspace-only helper tools.
-- New SurrogateKV variants should start as a small spec in
-  `surrogatekv/methods.py` and keep any new implementation code in the runtime
-  module it actually belongs to.
+Source CSV:
+`results/longbench/llama3_8b_instruct/table1_longbench_k512.csv`
+
+### Needle-in-a-Haystack, Mistral-7B-Instruct-v0.2, KV Budget 128
+
+| Method | NIAH Avg | Examples |
+| --- | ---: | ---: |
+| SnapKV | 87.51 | 1560 |
+| DynamicKV | 98.46 | 1560 |
+| Ada-KV | 90.04 | 1560 |
+| SurrogateKV-Snap | 98.84 | 1560 |
+| SurrogateKV-Ada | 84.66 | 1560 |
+| SurrogateKV-Dynamic | 98.74 | 1560 |
+
+Source CSV:
+`results/niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/niah_average_table.csv`
+
+Selected heatmaps are kept in `results/images/`.
+
+![SurrogateKV-Dynamic Needle-in-a-Haystack heatmap](results/images/niah_heatmap_k128_surrogatekv_dynamic.png)
+
+## Development Notes
+
+- Public API and method names live in `surrogatekv/core.py` and
+  `surrogatekv/registry.py`.
+- Runtime implementation details live under `surrogatekv/runtime/`.
+- Add new method aliases through `surrogatekv/registry.py`.
+- Keep raw benchmark outputs and local-only workspace tools out of the paper
+  repository.
+
+## Citation
+
+BibTeX will be added when the paper metadata is finalized.
+
+## Acknowledgements
+
+This repository follows the evaluation and code-organization conventions of
+prior KV-cache compression projects, including SnapKV, H2O, AdaKV, DynamicKV,
+and PyramidKV/KVCache-Factory.

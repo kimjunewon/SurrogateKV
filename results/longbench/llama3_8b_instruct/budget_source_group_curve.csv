@@ -1,0 +1,49 @@
+group,method,K,Avg
+Shared token budget,H2O,64,33.5256
+Shared token budget,H2O,128,35.5619
+Shared token budget,H2O,256,37.8081
+Shared token budget,H2O,512,39.6800
+Shared token budget,H2O,1024,40.6762
+Shared token budget,H2O,2048,41.5138
+Shared token budget,SnapKV,64,33.2400
+Shared token budget,SnapKV,128,35.6650
+Shared token budget,SnapKV,256,38.8881
+Shared token budget,SnapKV,512,40.2600
+Shared token budget,SnapKV,1024,40.9244
+Shared token budget,SnapKV,2048,41.7150
+Shared token budget,SurrogateKV-Snap,64,34.6638
+Shared token budget,SurrogateKV-Snap,128,37.9888
+Shared token budget,SurrogateKV-Snap,256,39.5625
+Shared token budget,SurrogateKV-Snap,512,40.8819
+Shared token budget,SurrogateKV-Snap,1024,41.4525
+Shared token budget,SurrogateKV-Snap,2048,41.7825
+Layer-adaptive budget,PyramidKV,64,35.0050
+Layer-adaptive budget,PyramidKV,128,37.4263
+Layer-adaptive budget,PyramidKV,256,39.3331
+Layer-adaptive budget,PyramidKV,512,40.1769
+Layer-adaptive budget,PyramidKV,1024,41.0431
+Layer-adaptive budget,PyramidKV,2048,41.6850
+Layer-adaptive budget,DynamicKV,64,34.6869
+Layer-adaptive budget,DynamicKV,128,37.8031
+Layer-adaptive budget,DynamicKV,256,39.7019
+Layer-adaptive budget,DynamicKV,512,40.6050
+Layer-adaptive budget,DynamicKV,1024,41.1875
+Layer-adaptive budget,DynamicKV,2048,41.5938
+Layer-adaptive budget,SurrogateKV-Dynamic,64,34.3475
+Layer-adaptive budget,SurrogateKV-Dynamic,128,37.2031
+Layer-adaptive budget,SurrogateKV-Dynamic,256,39.3762
+Layer-adaptive budget,SurrogateKV-Dynamic,512,40.8088
+Layer-adaptive budget,SurrogateKV-Dynamic,1024,41.2769
+Layer-adaptive budget,SurrogateKV-Dynamic,2048,41.8006
+Head-aware budget,AdaKV,64,34.4550
+Head-aware budget,AdaKV,128,38.5950
+Head-aware budget,AdaKV,256,39.9931
+Head-aware budget,AdaKV,512,40.7744
+Head-aware budget,AdaKV,1024,41.4294
+Head-aware budget,AdaKV,2048,41.7506
+Head-aware budget,SurrogateKV-Ada,64,35.0219
+Head-aware budget,SurrogateKV-Ada,128,38.4231
+Head-aware budget,SurrogateKV-Ada,256,40.1938
+Head-aware budget,SurrogateKV-Ada,512,41.2613
+Head-aware budget,SurrogateKV-Ada,1024,41.6544
+Head-aware budget,SurrogateKV-Ada,2048,41.8800
