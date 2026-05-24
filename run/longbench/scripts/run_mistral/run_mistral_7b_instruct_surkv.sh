@@ -6,7 +6,7 @@ WORKSPACE_ROOT="${SURKV_WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/../.." && pwd)}"
 
 MODEL_PATH="${MODEL_PATH:-${HOME}/hf_models/mistralai--Mistral-7B-Instruct-v0.3}"
 SAVE_DIR="${SAVE_DIR:-${WORKSPACE_ROOT}/runs/longbench}"
-DATA_DIR="${DATA_DIR:-${REPO_ROOT}/data/LongBench}"
+DATA_DIR="${DATA_DIR:-}"
 DATASETS_CSV="${DATASETS_CSV:-qasper}"
 METHOD="${METHOD:-SurrogateKV}"
 KV_BUDGETS="${KV_BUDGETS:-128,512}"
@@ -18,6 +18,11 @@ IFS=',' read -r -a BUDGETS <<< "${KV_BUDGETS}"
 EXTRA_ARGS=()
 if [[ "${HF_OFFLINE:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--hf_offline)
+fi
+
+if [[ -z "${DATA_DIR}" ]]; then
+  echo "Set DATA_DIR to the directory containing LongBench JSONL files." >&2
+  exit 1
 fi
 
 for dataset in "${DATASETS[@]}"; do

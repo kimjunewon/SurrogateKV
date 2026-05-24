@@ -15,8 +15,5 @@ results/
 !results/**/*.png
 logs/
 
-# Keep dataset slots in the repo, but never commit local benchmark data.
-data/**
-!data/
-!data/**/
-!data/**/.gitkeep
+# Keep local benchmark inputs outside the paper artifact.
+data/

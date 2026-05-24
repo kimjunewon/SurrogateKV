@@ -47,8 +47,6 @@ results/
   longbench/             # compact LongBench CSV exports
   niah/                  # Needle-in-a-Haystack CSV exports
   images/                # selected heatmaps and figures
-data/
-  LongBench/             # local LongBench JSONL files, not committed
 ```
 
 Raw datasets, model weights, full generations, logs, local scratch scripts, and
@@ -119,6 +117,7 @@ compressed_k, compressed_v = cluster.update_kv(
 The LongBench scripts mirror the lightweight entry-point style used by common
 KV-cache compression repositories. In this local setup, prediction dispatches to
 the surrounding SurKV experiment workspace through `SURKV_WORKSPACE_ROOT`.
+Set `DATA_DIR` to an external directory containing LongBench JSONL files.
 
 ```bash
 export SURKV_WORKSPACE_ROOT=/path/to/SurKV
