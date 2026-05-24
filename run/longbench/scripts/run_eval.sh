@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-RESULTS_DIR="${RESULTS_DIR:-${REPO_ROOT}/results}"
+RESULTS_DIR="${RESULTS_DIR:-${REPO_ROOT}/runs/longbench}"
 DATASETS="${DATASETS:-qasper,hotpotqa,2wikimqa,gov_report,multi_news,trec,triviaqa,passage_retrieval_en,lcc,repobench-p}"
 METHODS="${METHODS:-SurrogateKV,SurrogateKV-Drop}"
 

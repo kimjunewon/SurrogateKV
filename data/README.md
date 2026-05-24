@@ -1,8 +1,9 @@
-# Result Exports
+# Experiment Data
 
 This directory keeps compact CSV exports for the experiments reported with this
-codebase. Raw benchmark datasets, per-example generations, logs, and local
-workspace paths are intentionally excluded.
+codebase, plus selected heatmap images used by the paper. Raw benchmark
+datasets, per-example generations, logs, and local workspace paths are
+intentionally excluded.
 
 ## LongBench
 

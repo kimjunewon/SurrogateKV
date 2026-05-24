@@ -18,14 +18,14 @@ budget/salience profiles for SnapKV-, AdaKV-, and DynamicKV-style settings.
   norm-restored KV prototype.
 - **Standard decoding path:** packed raw entries and surrogate entries are both
   ordinary KV pairs.
-- **Paper-facing artifacts:** includes the public runtime, LongBench entry
-  points, compact CSV result exports, and selected heatmap figures.
+- **Paper-facing data:** includes compact CSV exports and selected heatmap
+  figures used by the paper.
 
 ## News
 
 - The codebase has been cleaned into a standalone paper repository.
-- Compact LongBench and Needle-in-a-Haystack result exports are available under
-  `results/`.
+- Compact LongBench and Needle-in-a-Haystack experiment data are available
+  under `data/`.
 
 ## Repository Layout
 
@@ -43,7 +43,7 @@ surrogatekv/
     common.py            # shared flags and tensor helpers
 run/
   longbench/             # LongBench prediction/evaluation entry points
-results/
+data/
   longbench/             # compact LongBench CSV exports
   niah/                  # Needle-in-a-Haystack CSV exports
   images/                # selected heatmaps and figures
@@ -117,11 +117,12 @@ compressed_k, compressed_v = cluster.update_kv(
 The LongBench scripts mirror the lightweight entry-point style used by common
 KV-cache compression repositories. In this local setup, prediction dispatches to
 the surrounding SurKV experiment workspace through `SURKV_WORKSPACE_ROOT`.
-Set `DATA_DIR` to an external directory containing LongBench JSONL files.
+Set `LONGBENCH_DATA_DIR` to an external directory containing LongBench JSONL
+files.
 
 ```bash
 export SURKV_WORKSPACE_ROOT=/path/to/SurKV
-export DATA_DIR=/path/to/LongBench
+export LONGBENCH_DATA_DIR=/path/to/LongBench
 export MODEL_PATH=/path/to/meta-llama--Meta-Llama-3-8B-Instruct
 export METHOD=SurrogateKV
 export KV_BUDGETS=128,512
@@ -139,11 +140,10 @@ python run/longbench/eval.py \
   --methods SurrogateKV,SurrogateKV-Ada,SurrogateKV-Dynamic
 ```
 
-## Result Exports
+## Experiment Data
 
 This repository includes compact CSV exports for representative paper figures
-and tables. See `results/README.md` for the source workspace paths and file
-descriptions.
+and tables. See `data/README.md` for the exported data groups.
 
 ### LongBench, Llama-3-8B-Instruct, KV Budget 512
 
@@ -157,7 +157,7 @@ descriptions.
 | SurrogateKV | 40.88 | 97.52 |
 
 Source CSV:
-`results/longbench/llama3_8b_instruct/table1_longbench_k512.csv`
+`data/longbench/llama3_8b_instruct/table1_longbench_k512.csv`
 
 ### Needle-in-a-Haystack, Mistral-7B-Instruct-v0.2, KV Budget 128
 
@@ -171,11 +171,11 @@ Source CSV:
 | SurrogateKV-Dynamic | 98.74 | 1560 |
 
 Source CSV:
-`results/niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/niah_average_table.csv`
+`data/niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/niah_average_table.csv`
 
-Selected heatmaps are kept in `results/images/`.
+Selected heatmaps are kept in `data/images/`.
 
-![SurrogateKV-Dynamic Needle-in-a-Haystack heatmap](results/images/niah_heatmap_k128_surrogatekv_dynamic.png)
+![SurrogateKV-Dynamic Needle-in-a-Haystack heatmap](data/images/niah_heatmap_k128_surrogatekv_dynamic.png)
 
 ## Development Notes
 

@@ -7,13 +7,13 @@ dist/
 build/
 *.egg-info/
 outputs/
-results/
-!results/
-!results/**/
-!results/**/*.csv
-!results/**/*.md
-!results/**/*.png
+runs/
 logs/
 
-# Keep local benchmark inputs outside the paper artifact.
-data/
+# Keep compact paper data exports; ignore raw/local data by default.
+data/**
+!data/
+!data/**/
+!data/**/*.csv
+!data/**/*.md
+!data/**/*.png
