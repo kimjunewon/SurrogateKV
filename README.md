@@ -23,6 +23,9 @@ budget/salience profiles for SnapKV-, AdaKV-, and DynamicKV-style settings.
 
 ## News
 
+- **July 13, 2026:** Corrected the Mistral NIAH SurrogateKV-Ada evaluation
+  dispatch to use the intended per-head cache path. See
+  [`CORRECTIONS.md`](CORRECTIONS.md) for the corrected scores and scope.
 - The codebase has been cleaned into a standalone paper repository.
 - Compact LongBench and Needle-in-a-Haystack experiment data are available
   under `data/`.
@@ -96,7 +99,7 @@ adapter after prefill scores are available.
 from surrogatekv import SurKVCluster
 
 cluster = SurKVCluster(
-    mode="surrogate_kv_ada",
+    mode="surrogate_kv",
     window_size=8,
     max_capacity_prompt=512,
     kernel_size=7,
@@ -111,6 +114,31 @@ compressed_k, compressed_v = cluster.update_kv(
     num_key_value_groups=num_key_value_groups,
 )
 ```
+
+`SurrogateKV-Ada` must preserve Ada-KV's head-specific capacities and RAW
+selections. Its attention adapter should therefore call the dedicated
+head-aware entry point:
+
+```python
+ada_cluster = SurKVCluster(
+    mode="surrogate_kv_ada",
+    window_size=8,
+    max_capacity_prompt=512,
+    kernel_size=7,
+    chunk_size=16,
+)
+
+compressed_k, compressed_v = ada_cluster.update_kv_headwise(
+    key_states,
+    query_states,
+    value_states,
+    attention_mask=None,
+    num_key_value_groups=num_key_value_groups,
+)
+```
+
+Calling the shared-token `update_kv()` entry point for `surrogate_kv_ada`
+raises an error to prevent accidental collapse of the per-head layout.
 
 ## LongBench
 
@@ -167,7 +195,7 @@ Source CSV:
 | DynamicKV | 98.46 | 1560 |
 | Ada-KV | 90.04 | 1560 |
 | SurrogateKV-Snap | 98.84 | 1560 |
-| SurrogateKV-Ada | 84.66 | 1560 |
+| SurrogateKV-Ada | 98.18 | 1560 |
 | SurrogateKV-Dynamic | 98.74 | 1560 |
 
 Source CSV:
@@ -176,6 +204,14 @@ Source CSV:
 Selected heatmaps are kept in `data/images/`.
 
 ![SurrogateKV-Dynamic Needle-in-a-Haystack heatmap](data/images/niah_heatmap_k128_surrogatekv_dynamic.png)
+
+The corrected SurrogateKV-Ada heatmap and a submitted-path/corrected-path
+comparison are also available:
+
+[PNG](data/images/mistral_niah_ada_correction_2x3.png) |
+[PDF](data/images/mistral_niah_ada_correction_2x3.pdf)
+
+![Corrected Mistral NIAH SurrogateKV-Ada evaluation](data/images/mistral_niah_ada_correction_2x3.png)
 
 ## Development Notes
 

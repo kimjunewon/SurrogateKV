@@ -13,6 +13,11 @@ curves and raw/surrogate/drop allocation summaries.
 
 ## Needle-in-a-Haystack
 
-`niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/` contains K=128
-Mistral-7B-Instruct-v0.2 average scores and heatmap grids for SnapKV, DynamicKV,
-AdaKV, and the corresponding SurrogateKV variants.
+`niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/` contains the
+corrected B_KV=128 Mistral-7B-Instruct-v0.2 average scores and heatmap grids for
+SnapKV, DynamicKV, AdaKV, and the corresponding SurrogateKV variants.
+`niah/mistral_7b_instruct_v02/k64_ctx1000_32000_step200/` contains the corrected
+B_KV=64 SurrogateKV-Ada average and heatmap grid. See `../CORRECTIONS.md` for
+the correction scope. The corrected runs used a different worker-concurrency
+layout, so their runner wall time is marked `NA` rather than compared with the
+timing column from the original exports.

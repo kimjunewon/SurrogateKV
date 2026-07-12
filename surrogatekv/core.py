@@ -210,6 +210,11 @@ class SurKVCluster(
 
 
     def update_kv(self, key_states, query_states, value_states, attention_mask, num_key_value_groups):
+        if self.mode == "surrogate_kv_ada" and not bool(getattr(self, "_allocator_plan_only", False)):
+            raise RuntimeError(
+                "SurrogateKV-Ada requires update_kv_headwise() so that Ada-KV's per-head "
+                "capacities and selections are preserved."
+            )
         update_start = time.perf_counter()
         del attention_mask
         assert key_states.shape[-2] == query_states.shape[-2]
