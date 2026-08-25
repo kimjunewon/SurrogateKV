@@ -17,3 +17,4 @@ data/**
 !data/**/*.csv
 !data/**/*.md
 !data/**/*.pdf
+!data/**/*.svg

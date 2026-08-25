@@ -29,8 +29,8 @@ corrected head-aware SurrogateKV-Ada export used in the correction audit.
 
 `images/mistral_niah_k128_method_comparison.pdf` is the current paired
 comparison linked from the README. The dispatch-correction panel is retained
-alongside it for traceability. Both figures use PDF to preserve vector text for
-papers and slides.
+alongside it for traceability. PDF files are the archival figures for papers
+and slides; matching SVG files provide inline previews on GitHub.
 
 The July 2026 Ada dispatch correction is described in
 [`../CORRECTIONS.md`](../CORRECTIONS.md).
