@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -274,7 +274,7 @@ class LayerBudgetMixin:
             if cost_delta > 0:
                 heapq.heappush(heap, (-value_delta / float(cost_delta), int(layer_idx), 0, 1))
         while heap and remaining > 0:
-            neg_density, layer_idx, from_idx, to_idx = heapq.heappop(heap)
+            _neg_density, layer_idx, from_idx, to_idx = heapq.heappop(heap)
             points = curves[layer_idx]
             if int(selected_index[layer_idx]) != int(from_idx):
                 continue
@@ -620,9 +620,7 @@ class LayerBudgetMixin:
                 / float(remaining_layers)
                 * float(ledger_strength)
             )
-            # One scalar signal, one bounded online adjustment.  This mirrors
-            # DynamicKV's high pooled-attention mass without another global
-            # top-k over all layers.
+            # Use one bounded adjustment without a global cross-layer top-k.
             swing_limit = max(0, int(round(float(base_capacity) * 0.08 * float(ledger_strength))))
             signal_swing = int(round(max(-1.0, min(1.0, relative_pressure)) * float(swing_limit)))
             target_capacity = int(round(float(base_capacity) + credit_per_layer + float(signal_swing)))
@@ -764,8 +762,6 @@ class LayerBudgetMixin:
         raw_density_arr = raw_value_arr / np.maximum(atom_len_arr, 1.0)
         atom_indices_arr = np.arange(num_atoms, dtype=np.int64)
         raw_drop_order = np.lexsort((atom_indices_arr, atom_risk_arr))
-        raw_keep_order = np.lexsort((atom_indices_arr, -atom_risk_arr))
-
         actions = np.full((num_atoms,), 2, dtype=np.int8)
         current_cost = int(full_cost)
         for atom_idx in raw_drop_order.tolist():

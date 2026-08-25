@@ -5,7 +5,6 @@ from typing import Dict, List, Tuple
 
 import torch
 
-
 _CHUNK_SLICE_CACHE: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
 _FAST_PACK_METADATA_CACHE: Dict[Tuple[str, int, int, Tuple[int, ...]], Dict[str, torch.Tensor]] = {}
 _RECENT_MASK_CACHE: Dict[Tuple[str, int, str], torch.Tensor] = {}

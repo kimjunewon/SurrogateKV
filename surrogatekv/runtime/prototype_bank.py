@@ -18,6 +18,8 @@ from .common import (
     _restore_rms_value_norm,
     _safe_key_norm_scale,
 )
+
+
 class MicroPrototypeBankMixin:
     def _dynamic_micro_prototype_bank(
         self,
@@ -594,6 +596,17 @@ class PrototypeBankMixin(MicroPrototypeBankMixin):
             empty_bank = key_states.new_empty((bsz, heads, 0, head_dim))
             empty_score = key_states.new_empty((bsz, 0), dtype=torch.float32)
             return empty_bank, empty_bank.clone(), None, None, empty_score, empty_score.clone()
+        # Cosine medoids use the generic path because admitted regions may be
+        # irregular.
+        if surrogate_mode == "cosine_medoid":
+            return self._chunk_prototype_bank_generic(
+                key_states=key_states,
+                value_states=value_states,
+                token_scores=token_scores,
+                chunk_slices=chunk_slices,
+                surrogate_mode=surrogate_mode,
+                return_distortion=return_distortion,
+            )
         if not self._is_regular_chunk_layout(chunk_slices):
             span = self._contiguous_chunk_span(chunk_slices)
             if span is not None:
@@ -986,7 +999,24 @@ class PrototypeBankMixin(MicroPrototypeBankMixin):
             chunk_values = value_states[:, :, start:end, :].unsqueeze(2)
             chunk_scores = token_scores[:, start:end].unsqueeze(1)
 
-            if surrogate_mode in _SCORE_WEIGHTED_SURROGATE_MODES:
+            if surrogate_mode == "cosine_medoid":
+                key_source = chunk_keys.to(dtype=torch.float32)
+                key_centroid = torch.nn.functional.normalize(key_source.mean(dim=3), dim=-1)
+                key_unit = torch.nn.functional.normalize(key_source, dim=-1)
+                similarities = (key_unit * key_centroid.unsqueeze(3)).sum(dim=-1)
+                medoid_rel = similarities.argmax(dim=3)
+                medoid_index = medoid_rel.unsqueeze(3).unsqueeze(-1).expand(
+                    chunk_keys.shape[0],
+                    chunk_keys.shape[1],
+                    chunk_keys.shape[2],
+                    1,
+                    chunk_keys.shape[-1],
+                )
+                key_proto = chunk_keys.gather(dim=3, index=medoid_index).squeeze(3)
+                value_proto = chunk_values.gather(dim=3, index=medoid_index).squeeze(3)
+                entropy = None
+                max_weight = None
+            elif surrogate_mode in _SCORE_WEIGHTED_SURROGATE_MODES:
                 weights = torch.clamp(chunk_scores.to(dtype=torch.float32), min=1e-6)
                 if surrogate_mode in _LIGHT_VALUE_WEIGHT_MODES:
                     weights = torch.sqrt(weights)

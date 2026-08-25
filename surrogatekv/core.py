@@ -3,11 +3,16 @@ from __future__ import annotations
 import math
 import os
 import time
-from typing import Dict, Sequence, Tuple
+from typing import ClassVar, Dict, Sequence, Tuple
 
 import torch
 
-from .runtime.region_allocator import allocate_surrogate_regions
+from .registry import MODE_TO_SPEC, MethodSpec
+from .runtime.cache_pipeline import (
+    CachePackingMixin,
+    CacheScoringMixin,
+    CacheStateMixin,
+)
 from .runtime.common import (
     _SURKV_HEAD_SCORE_FUSION,
     _SURKV_PROFILE_TIMING,
@@ -15,11 +20,10 @@ from .runtime.common import (
     _env_flag,
     _rank01,
 )
-from .runtime.layer_budget import LayerBudgetMixin
 from .runtime.headwise_runtime import HeadwiseRuntimeMixin
-from .runtime.cache_pipeline import CachePackingMixin, CacheStateMixin, CacheScoringMixin
+from .runtime.layer_budget import LayerBudgetMixin
 from .runtime.prototype_bank import PrototypeBankMixin
-from .registry import MODE_TO_SPEC, MethodSpec
+from .runtime.region_allocator import allocate_surrogate_regions
 from .schedule import adaptive_entropy_keep_ratio
 
 
@@ -31,10 +35,10 @@ class SurKVCluster(
     PrototypeBankMixin,
     HeadwiseRuntimeMixin,
 ):
-    _GLOBAL_BUDGET_LEDGER: Dict[str, object] = {
+    _GLOBAL_BUDGET_LEDGER: ClassVar[Dict[str, object]] = {
         "enabled": False,
     }
-    _GLOBAL_LAYER_DYNAMIC_STATE: Dict[str, object] = {
+    _GLOBAL_LAYER_DYNAMIC_STATE: ClassVar[Dict[str, object]] = {
         "enabled": False,
         "records": [],
     }
@@ -441,12 +445,8 @@ class SurKVCluster(
             return key_states, value_states
         if self._global_budget_ledger_active() and layer_dynamic_finalizing_capacity is None:
             if bool(self.global_layer_allocator):
-                # Keep the dynamic-layer path on the same single-pass allocator.
-                # A token-score market signal needs top-k/entropy reductions and
-                # Python scalar reads per layer, which makes prefill synchronize
-                # with the GPU.  The ledger still reallocates capacity from
-                # actual layer usage, but it no longer pays an extra runtime
-                # scoring market before planning.
+                # Avoid per-layer top-k reductions and host reads here. The
+                # ledger still reallocates capacity from actual layer usage.
                 self._last_layer_budget_curve = None
                 self._last_layer_budget_signal = 1.0
                 self._last_allocator_stats.update(
@@ -540,7 +540,6 @@ class SurKVCluster(
         # The allocator rebuilds raw/surrogate/drop regions from micro-atoms.
         chunk_slices = [(compressible_start, past_len)]
         chunk_mean_scores = token_scores.new_zeros((token_scores.shape[0], 1))
-        chunk_max_scores = token_scores.new_zeros((token_scores.shape[0], 1))
         record_update_timing("region_setup_stage_total", stage_start)
         timing_breakdown["planning"] += time.perf_counter() - stage_start
         if self.layer_scheduler == "adaptive_entropy":
@@ -633,7 +632,6 @@ class SurKVCluster(
         post_alloc_start = time.perf_counter()
         chunk_slices, chunk_lengths, replace_mask, surrogate_lengths = allocated
         chunk_mean_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
-        chunk_max_scores = token_scores.new_zeros((token_scores.shape[0], len(chunk_slices)))
         stats = dict(self._last_allocator_stats or {})
         stats.update(
             {

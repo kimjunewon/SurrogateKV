@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -16,22 +17,37 @@ class MethodSpec:
     head_score_fusion: str = "mean"
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+def _env_str(name: str, default: str) -> str:
+    raw = str(os.environ.get(name, "") or "").strip()
+    return raw if raw else str(default)
+
+
 SURROGATE_KV = MethodSpec(
     name="SurrogateKV",
     mode="surrogate_kv",
-    surrogate_mode="norm_rms_mean",
+    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
     dynamic_regioning=True,
     dynamic_allocator="surrogate_kv",
-    dynamic_anchor_width=4,
+    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
 )
 
 SURROGATE_KV_ADA = MethodSpec(
     name="SurrogateKV-Ada",
     mode="surrogate_kv_ada",
-    surrogate_mode="norm_rms_mean",
+    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
     dynamic_regioning=True,
     dynamic_allocator="surrogate_kv",
-    dynamic_anchor_width=4,
+    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
     score_method="attention",
     head_score_fusion="ada_shared",
 )
@@ -39,15 +55,43 @@ SURROGATE_KV_ADA = MethodSpec(
 SURROGATE_KV_DYNAMIC = MethodSpec(
     name="SurrogateKV-Dynamic",
     mode="surrogate_kv_dynamic_layer",
-    surrogate_mode="norm_rms_mean",
+    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
     dynamic_regioning=True,
     dynamic_allocator="surrogate_kv",
-    dynamic_anchor_width=4,
+    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
     score_method="attention",
     head_score_fusion="mean",
 )
 
-SUPPORTED_SPECS = [SURROGATE_KV, SURROGATE_KV_ADA, SURROGATE_KV_DYNAMIC]
+SURROGATE_KV_PYRAMID = MethodSpec(
+    name="SurrogateKV-Pyramid",
+    mode="surrogate_kv_pyramid",
+    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
+    dynamic_regioning=True,
+    dynamic_allocator="surrogate_kv",
+    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
+    score_method="attention",
+    head_score_fusion="mean",
+)
+
+SURROGATE_KV_H2O = MethodSpec(
+    name="SurrogateKV-H2O",
+    mode="surrogate_kv_h2o",
+    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
+    dynamic_regioning=True,
+    dynamic_allocator="surrogate_kv",
+    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
+    score_method="h2o",
+    head_score_fusion="mean",
+)
+
+SUPPORTED_SPECS = [
+    SURROGATE_KV,
+    SURROGATE_KV_ADA,
+    SURROGATE_KV_DYNAMIC,
+    SURROGATE_KV_PYRAMID,
+    SURROGATE_KV_H2O,
+]
 MODE_TO_SPEC: dict[str, MethodSpec] = {spec.mode: spec for spec in SUPPORTED_SPECS}
 METHOD_TO_MODE: dict[str, str] = {spec.name.lower(): spec.mode for spec in SUPPORTED_SPECS}
 METHOD_TO_MODE.update(
@@ -79,16 +123,46 @@ METHOD_TO_MODE.update(
         "surrogate_kv_dynamic_layer": SURROGATE_KV_DYNAMIC.mode,
         "surkvdynamiclayer": SURROGATE_KV_DYNAMIC.mode,
         "surkv_dynamic_layer": SURROGATE_KV_DYNAMIC.mode,
+        "surrogatekvpyramid": SURROGATE_KV_PYRAMID.mode,
+        "surrogatekv-pyramid": SURROGATE_KV_PYRAMID.mode,
+        "surrogatekv_pyramid": SURROGATE_KV_PYRAMID.mode,
+        "surrogate_kv_pyramid": SURROGATE_KV_PYRAMID.mode,
+        "surkvpyramid": SURROGATE_KV_PYRAMID.mode,
+        "surkv-pyramid": SURROGATE_KV_PYRAMID.mode,
+        "surkv_pyramid": SURROGATE_KV_PYRAMID.mode,
+        "surrogatekvh2o": SURROGATE_KV_H2O.mode,
+        "surrogatekv-h2o": SURROGATE_KV_H2O.mode,
+        "surrogatekv_h2o": SURROGATE_KV_H2O.mode,
+        "surrogate_kv_h2o": SURROGATE_KV_H2O.mode,
+        "surkvh2o": SURROGATE_KV_H2O.mode,
+        "surkv-h2o": SURROGATE_KV_H2O.mode,
+        "surkv_h2o": SURROGATE_KV_H2O.mode,
     }
 )
+
+
+def override_method_specs(*, surrogate_mode: str | None = None, dynamic_anchor_width: int | None = None) -> None:
+    """Apply process-local ablation overrides to all SurrogateKV variants."""
+    updates = {}
+    if surrogate_mode:
+        updates["surrogate_mode"] = str(surrogate_mode)
+    if dynamic_anchor_width is not None and int(dynamic_anchor_width) > 0:
+        updates["dynamic_anchor_width"] = int(dynamic_anchor_width)
+    if not updates:
+        return
+    for mode, spec in list(MODE_TO_SPEC.items()):
+        MODE_TO_SPEC[mode] = replace(spec, **updates)
 
 
 __all__ = [
     "METHOD_TO_MODE",
     "MethodSpec",
     "MODE_TO_SPEC",
+    "override_method_specs",
     "SUPPORTED_SPECS",
     "SURROGATE_KV",
     "SURROGATE_KV_ADA",
     "SURROGATE_KV_DYNAMIC",
+    "SURROGATE_KV_PYRAMID",
+    "SURROGATE_KV_H2O",
 ]

@@ -19,7 +19,6 @@ from metrics import (
     rouge_zh_score,
 )
 
-
 DATASET2METRIC = {
     "narrativeqa": qa_f1_score,
     "qasper": qa_f1_score,
@@ -75,7 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate SurrogateKV LongBench predictions.")
     parser.add_argument("--results_dir", type=Path, required=True)
     parser.add_argument("--datasets", type=str, default=",".join(DATASET2METRIC))
-    parser.add_argument("--methods", type=str, default="SurrogateKV,SurrogateKV-Drop")
+    parser.add_argument("--methods", type=str, default="SurrogateKV,SurrogateKV-Ada,SurrogateKV-Dynamic")
     args = parser.parse_args()
 
     datasets = parse_csv_list(args.datasets)

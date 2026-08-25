@@ -887,11 +887,8 @@ def allocate_surrogate_regions(
 
     candidate_count += append_drop_run_candidates(initial_actions)
 
-    # Mid budgets can lose the broad packets that were valuable at tighter
-    # budgets because the current raw frontier breaks one long residual run
-    # into many short ones.  Add one nested "price octave" frontier as extra
-    # packet candidates; the normal current-ledger scoring below still
-    # decides whether the packet is worth buying under the actual budget.
+    # A stricter RAW frontier keeps broad residual packets available as
+    # candidates. Final admission still uses the current budget and ledger.
     nested_frontier_price = float(region_open_cost) * 2.0
     if math.isfinite(nested_frontier_price) and nested_frontier_price > 0.0:
         shadow_actions = np.where(raw_density_arr >= float(nested_frontier_price), 2, 0).astype(np.int8)

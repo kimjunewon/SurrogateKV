@@ -132,6 +132,8 @@ def surkv_method_family(method: str | None) -> str:
         return "dynamic"
     if key in {"surrogatekv-pyramid", "surkv-pyramid", "surrogate-kv-pyramid"}:
         return "pyramid"
+    if key in {"surrogatekv-h2o", "surkv-h2o", "surrogate-kv-h2o"}:
+        return "h2o"
     return "surrogate"
 
 
@@ -139,7 +141,7 @@ def _profile_window_size(*, family: str, hparam_profile: str, base_capacity: int
     profile = str(hparam_profile or "").strip().lower()
     if family in {"dynamic", "pyramid"}:
         window_size = 8
-    elif family in {"snap", "ada"} and (
+    elif family in {"snap", "ada", "h2o"} and (
         profile.startswith("official_repo_longbench_external")
         or profile.startswith("paper_original_external")
         or profile in {"niah", "needle", "needle_in_haystack"}

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-WORKSPACE_ROOT="${SURKV_WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/../.." && pwd)}"
+PYTHON_BIN="${PYTHON:-python3}"
 
 MODEL_PATH="${MODEL_PATH:-${HOME}/hf_models/Qwen--Qwen2-7B-Instruct}"
-SAVE_DIR="${SAVE_DIR:-${WORKSPACE_ROOT}/runs/longbench}"
+SAVE_DIR="${SAVE_DIR:-${REPO_ROOT}/runs/longbench}"
 LONGBENCH_DATA_DIR="${LONGBENCH_DATA_DIR:-${DATA_DIR:-}}"
 DATASETS_CSV="${DATASETS_CSV:-qasper}"
 METHOD="${METHOD:-SurrogateKV}"
@@ -32,7 +32,7 @@ for dataset in "${DATASETS[@]}"; do
     exit 1
   fi
   for budget in "${BUDGETS[@]}"; do
-    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" python "${REPO_ROOT}/run/longbench/pred.py" \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" "${PYTHON_BIN}" "${REPO_ROOT}/run/longbench/pred.py" \
       --dataset "${dataset}" \
       --data_file "${data_file}" \
       --save_dir "${SAVE_DIR}" \

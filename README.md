@@ -1,106 +1,94 @@
 # SurrogateKV
 
-Official implementation and result exports for **SurrogateKV**, a KV-cache
-compression method that represents each non-recent cache region as raw KV
-tokens, a single surrogate KV pair, or a dropped region under a fixed cache
-budget.
+Official implementation and result exports for **SurrogateKV:
+Representation-Preserving KV Cache Compression for Long-Context LLMs**.
 
-SurrogateKV keeps compressed cache entries in the standard KV format, so the
-decoder can use ordinary attention after prefill-time cache packing. The same
-region-level allocator is used across the SurrogateKV variants, with different
-budget/salience profiles for SnapKV-, AdaKV-, and DynamicKV-style settings.
+Conventional KV-cache compressors decide which states to retain and which to
+evict. SurrogateKV adds a third option under the same cache-slot budget: a
+lower-salience contiguous region can be represented by one independently
+addressable surrogate KV pair. High-salience states remain exact RAW entries,
+and regions that are not admitted remain dropped.
 
 ## Highlights
 
-- **Region-level representation choice:** allocates each cache region to raw,
-  surrogate, or dropped storage rather than only retaining or evicting tokens.
-- **Compact surrogate targets:** replaces selected evicted regions with one
-  norm-restored KV prototype.
-- **Standard decoding path:** packed raw entries and surrogate entries are both
-  ordinary KV pairs.
-- **Paper-facing data:** includes compact CSV exports and selected heatmap
-  figures used by the paper.
-
-## News
-
-- **July 13, 2026:** Corrected the Mistral NIAH SurrogateKV-Ada evaluation
-  dispatch to use the intended per-head cache path. See
-  [`CORRECTIONS.md`](CORRECTIONS.md) for the corrected scores and scope.
-- The codebase has been cleaned into a standalone paper repository.
-- Compact LongBench and Needle-in-a-Haystack experiment data are available
-  under `data/`.
+- **Fixed-budget representation:** allocates cache capacity among exact RAW,
+  regional SURROGATE, and DROP states.
+- **One-time construction:** builds and packs surrogate entries after prefill;
+  decoding then uses ordinary attention over standard KV tensors.
+- **Parent-aware variants:** supports shared-token, layer-adaptive, and
+  head-adaptive cache layouts.
+- **Result exports:** includes compact LongBench tables and Mistral
+  Needle-in-a-Haystack (NIAH) grids.
 
 ## Repository Layout
 
 ```text
 surrogatekv/
-  core.py                # SurKVCluster public runtime entry point
+  core.py                # SurKVCluster runtime entry point
   registry.py            # method registry and aliases
   schedule.py            # layer-budget schedules
   runtime/
-    region_allocator.py  # raw / surrogate / drop region allocator
-    cache_pipeline.py    # scoring, packing, stats, layout metadata
-    prototype_bank.py    # surrogate KV prototype construction
+    region_allocator.py  # RAW / SURROGATE / DROP allocation
+    prototype_bank.py    # surrogate KV construction
+    cache_pipeline.py    # scoring, packing, and layout metadata
+    headwise_runtime.py  # head-aware Ada-KV path
     layer_budget.py      # cross-layer budget coordination
-    headwise_runtime.py  # headwise Ada/GQA cache path
-    common.py            # shared flags and tensor helpers
-run/
-  longbench/             # LongBench prediction/evaluation entry points
-data/
-  longbench/             # compact LongBench CSV exports
-  niah/                  # Needle-in-a-Haystack CSV exports
-  images/                # selected heatmaps and figures
+    common.py            # shared tensor helpers and flags
+run/longbench/           # prediction and evaluation entry points
+data/                    # compact result exports and figures
+tests/                   # CPU unit and smoke tests
 ```
 
-Raw datasets, model weights, full generations, logs, local scratch scripts, and
-manuscript sources are intentionally kept outside this repository.
+Model weights, benchmark datasets, full generations, logs, and local scratch
+artifacts are intentionally excluded.
 
 ## Installation
 
 ```bash
-git clone <repo-url> SurrogateKV
+git clone https://github.com/kimjunewon/SurrogateKV.git
 cd SurrogateKV
-python -m pip install -e .
+python3 -m pip install -e .
 ```
 
-The runtime expects PyTorch and NumPy. Benchmark runners additionally require
-the model/evaluation stack used by the experiment workspace, such as
-`transformers`, `datasets`, `rouge`, `jieba`, and `fuzzywuzzy`.
+The runtime requires Python 3.10 or newer, PyTorch, and NumPy. LongBench
+evaluation additionally uses `transformers`, `datasets`, `rouge`, `jieba`, and
+`fuzzywuzzy`; install those optional dependencies with
+`python3 -m pip install -e ".[longbench]"`.
 
 Quick import check:
 
 ```bash
-python - <<'PY'
+python3 - <<'PY'
 from surrogatekv import SurKVCluster, SURROGATEKV_METHOD_TO_MODE
 
 print(sorted(SURROGATEKV_METHOD_TO_MODE))
-cluster = SurKVCluster(mode="surrogate_kv")
-print(cluster.mode)
+print(SurKVCluster(mode="surrogate_kv").mode)
 PY
 ```
 
-## Supported Methods
+## Paper Variants
 
-| Method name | Internal mode | Description |
+| Method | Internal mode | Parent layout |
 | --- | --- | --- |
-| `SurrogateKV`, `SurrogateKV-Snap` | `surrogate_kv` | Surrogate allocation with SnapKV-style local scoring. |
-| `SurrogateKV-Ada` | `surrogate_kv_ada` | Surrogate allocation with head-adaptive budget use. |
-| `SurrogateKV-Dynamic` | `surrogate_kv_dynamic_layer` | Surrogate allocation with layer-adaptive budget use. |
+| `SurrogateKV`, `SurrogateKV-Snap` | `surrogate_kv` | Shared-token SnapKV-style layout |
+| `SurrogateKV-Ada` | `surrogate_kv_ada` | Head-adaptive Ada-KV layout |
+| `SurrogateKV-Dynamic` | `surrogate_kv_dynamic_layer` | Layer-adaptive DynamicKV layout |
 
-Common lowercase aliases such as `surkv`, `surkv-ada`, and `surkv-dynamic` are
-available through `SURROGATEKV_METHOD_TO_MODE`.
+Common lowercase aliases are available through
+`SURROGATEKV_METHOD_TO_MODE`.
 
-## Using the Runtime
+## Runtime API
 
-`SurKVCluster` is intended to be called from an attention hook or KV-cache
-adapter after prefill scores are available.
+`SurKVCluster` is called by an attention hook or cache adapter after the
+prefill attention scores are available. Inputs use the standard
+`[batch, heads, sequence, head_dim]` layout.
 
 ```python
 from surrogatekv import SurKVCluster
 
 cluster = SurKVCluster(
     mode="surrogate_kv",
-    window_size=8,
+    window_size=32,
     max_capacity_prompt=512,
     kernel_size=7,
     chunk_size=16,
@@ -115,14 +103,13 @@ compressed_k, compressed_v = cluster.update_kv(
 )
 ```
 
-`SurrogateKV-Ada` must preserve Ada-KV's head-specific capacities and RAW
-selections. Its attention adapter should therefore call the dedicated
+Ada-KV uses a head-specific cache layout. Its adapter must call the dedicated
 head-aware entry point:
 
 ```python
 ada_cluster = SurKVCluster(
     mode="surrogate_kv_ada",
-    window_size=8,
+    window_size=32,
     max_capacity_prompt=512,
     kernel_size=7,
     chunk_size=16,
@@ -137,16 +124,16 @@ compressed_k, compressed_v = ada_cluster.update_kv_headwise(
 )
 ```
 
-Calling the shared-token `update_kv()` entry point for `surrogate_kv_ada`
-raises an error to prevent accidental collapse of the per-head layout.
+Calling shared-token `update_kv()` in `surrogate_kv_ada` mode raises an error,
+preventing accidental conversion of the head-specific layout into a shared
+one.
 
 ## LongBench
 
-The LongBench scripts mirror the lightweight entry-point style used by common
-KV-cache compression repositories. In this local setup, prediction dispatches to
-the surrounding SurKV experiment workspace through `SURKV_WORKSPACE_ROOT`.
-Set `LONGBENCH_DATA_DIR` to an external directory containing LongBench JSONL
-files.
+The launch scripts use the KVCache-Factory attention adapter from the companion
+experiment workspace. Set `SURKV_WORKSPACE_ROOT` to a checkout containing
+`tools/run_surkv_longbench.py` and `repos/KVCache-Factory`, and set
+`LONGBENCH_DATA_DIR` to the LongBench JSONL directory.
 
 ```bash
 export SURKV_WORKSPACE_ROOT=/path/to/SurKV
@@ -159,75 +146,72 @@ export DATASETS_CSV=qasper,multifieldqa_en,hotpotqa
 bash run/longbench/scripts/run_llama/run_llama3_8b_instruct_surkv.sh
 ```
 
-Evaluate saved predictions:
+Evaluate saved predictions with:
 
 ```bash
-python run/longbench/eval.py \
+python3 run/longbench/eval.py \
   --results_dir runs/longbench \
   --datasets qasper,multifieldqa_en,hotpotqa \
   --methods SurrogateKV,SurrogateKV-Ada,SurrogateKV-Dynamic
 ```
 
-## Experiment Data
+## Results
 
-This repository includes compact CSV exports for representative paper figures
-and tables. See `data/README.md` for the exported data groups.
+The repository contains compact CSV exports for the paper tables and figures.
+See [`data/README.md`](data/README.md) for file-level details.
 
-### LongBench, Llama-3-8B-Instruct, KV Budget 512
+### LongBench, LLaMA-3-8B-Instruct, $B_{\mathrm{KV}}=512$
 
-| Method | Avg | Score vs FullKV |
+| Method | Average | FullKV retention (%) |
 | --- | ---: | ---: |
 | FullKV | 41.92 | 100.00 |
 | H2O | 39.68 | 94.65 |
 | SnapKV | 40.26 | 96.04 |
 | PyramidKV | 40.18 | 95.84 |
 | DynamicKV | 40.60 | 96.86 |
-| SurrogateKV | 40.88 | 97.52 |
+| **SurrogateKV-Snap** | **40.88** | **97.52** |
 
-Source CSV:
-`data/longbench/llama3_8b_instruct/table1_longbench_k512.csv`
+Source: [`table1_longbench_k512.csv`](data/longbench/llama3_8b_instruct/table1_longbench_k512.csv)
 
-### Needle-in-a-Haystack, Mistral-7B-Instruct-v0.2, KV Budget 128
+### Mistral-7B-Instruct-v0.2 NIAH, $B_{\mathrm{KV}}=128$
 
-| Method | NIAH Avg | Examples |
-| --- | ---: | ---: |
-| SnapKV | 87.51 | 1560 |
-| DynamicKV | 98.46 | 1560 |
-| Ada-KV | 90.04 | 1560 |
-| SurrogateKV-Snap | 98.84 | 1560 |
-| SurrogateKV-Ada | 98.18 | 1560 |
-| SurrogateKV-Dynamic | 98.74 | 1560 |
+| Parent method | Parent score | SurrogateKV variant | Variant score |
+| --- | ---: | --- | ---: |
+| SnapKV | 87.51 | SurrogateKV-Snap | **98.84** |
+| DynamicKV | 98.46 | SurrogateKV-Dynamic | **98.74** |
+| Ada-KV | 90.04 | SurrogateKV-Ada | **98.18** |
 
-Source CSV:
-`data/niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/niah_average_table.csv`
+Each score averages 1,560 evaluated placements spanning context lengths from
+1K to 32K tokens and needle depths from 0% to 100%.
 
-Selected heatmaps are kept in `data/images/`.
+Source: [`niah_average_table.csv`](data/niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/niah_average_table.csv)
 
-![SurrogateKV-Dynamic Needle-in-a-Haystack heatmap](data/images/niah_heatmap_k128_surrogatekv_dynamic.png)
+[PDF](data/images/mistral_niah_k128_method_comparison.pdf)
 
-The corrected SurrogateKV-Ada heatmap and a submitted-path/corrected-path
-comparison are also available:
+![Mistral NIAH parent and SurrogateKV comparison at B_KV=128](data/images/mistral_niah_k128_method_comparison.png)
 
-[PNG](data/images/mistral_niah_ada_correction_2x3.png) |
-[PDF](data/images/mistral_niah_ada_correction_2x3.pdf)
+The corrected head-aware Ada evaluation and its scope are documented in
+[`CORRECTIONS.md`](CORRECTIONS.md).
 
-![Corrected Mistral NIAH SurrogateKV-Ada evaluation](data/images/mistral_niah_ada_correction_2x3.png)
+## Development
 
-## Development Notes
+Run the CPU checks with:
 
-- Public API and method names live in `surrogatekv/core.py` and
-  `surrogatekv/registry.py`.
-- Runtime implementation details live under `surrogatekv/runtime/`.
-- Add new method aliases through `surrogatekv/registry.py`.
-- Keep raw benchmark outputs and local-only workspace tools out of the paper
-  repository.
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m compileall -q surrogatekv run
+```
+
+Keep raw benchmark outputs and machine-specific paths outside this repository.
+Public aliases belong in `surrogatekv/registry.py`; runtime implementation
+details belong under `surrogatekv/runtime/`.
 
 ## Citation
 
-BibTeX will be added when the paper metadata is finalized.
+BibTeX will be added when the publication metadata is finalized.
 
 ## Acknowledgements
 
-This repository follows the evaluation and code-organization conventions of
-prior KV-cache compression projects, including SnapKV, H2O, AdaKV, DynamicKV,
-and PyramidKV/KVCache-Factory.
+This repository follows the evaluation and integration conventions of prior
+KV-cache compression projects, including SnapKV, H2O, Ada-KV, DynamicKV, and
+PyramidKV/KVCache-Factory.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 import time
-from typing import Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -16,6 +16,8 @@ from .common import (
     _repeat_kv_heads,
     _safe_key_norm_scale,
 )
+
+
 class HeadwiseAdaOverlayMixin:
     def _update_kv_headwise_ada_overlay(
         self,
@@ -38,6 +40,12 @@ class HeadwiseAdaOverlayMixin:
         gqa_capacity_fusion: str,
     ):
         selected_support = getattr(self, "_last_ada_selected_support", None)
+        raw_only_control = str(os.environ.get("SURKV_HEADWISE_RAW_ONLY", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         if (
             int(groups) != 1
             or not isinstance(selected_support, torch.Tensor)
@@ -46,6 +54,18 @@ class HeadwiseAdaOverlayMixin:
             or precomputed_head_scores.shape[0] != 1
             or int(precomputed_head_scores.shape[2]) < int(past_len)
         ):
+            if raw_only_control:
+                support_shape = tuple(selected_support.shape) if isinstance(selected_support, torch.Tensor) else None
+                score_shape = (
+                    tuple(precomputed_head_scores.shape)
+                    if isinstance(precomputed_head_scores, torch.Tensor)
+                    else None
+                )
+                print(
+                    "[SurKV][raw-only] Ada overlay unavailable: "
+                    f"groups={groups} support_shape={support_shape} score_shape={score_shape} past_len={past_len}",
+                    flush=True,
+                )
             return None
 
         bsz = int(key_states.shape[0])
@@ -145,6 +165,8 @@ class HeadwiseAdaOverlayMixin:
         marginal_raw_t = raw_score_pos.masked_fill(~raw_exchange_mask, inf).amin(dim=1)
         drop_max_t = residual_score_pos.masked_fill(~drop_exchange_mask, neg_inf).amax(dim=1)
         active_exchange_heads_t = (drop_max_t > marginal_raw_t) & torch.isfinite(marginal_raw_t)
+        if raw_only_control:
+            active_exchange_heads_t = torch.zeros_like(active_exchange_heads_t)
         active_exchange_head_idx_t = torch.nonzero(active_exchange_heads_t, as_tuple=False).flatten().to(dtype=torch.long)
         active_exchange_heads = active_exchange_head_idx_t.detach().to(device="cpu", dtype=torch.long).numpy()
         if int(active_exchange_head_idx_t.numel()) > 0:
@@ -286,7 +308,6 @@ class HeadwiseAdaOverlayMixin:
             raw_region_counts = np.zeros((int(key_heads),), dtype=np.int64)
             drop_region_counts = np.zeros((int(key_heads),), dtype=np.int64)
         raw_regions_per_head = raw_region_counts.astype(np.int64).tolist()
-        drop_regions_per_head = drop_region_counts.astype(np.int64).tolist()
         chunk_count = int(
             max(1, int(math.ceil(max(0, int(past_len) - int(sink_len)) / float(max(1, int(self.spec.dynamic_anchor_width or 4))))))
         )
@@ -371,6 +392,7 @@ class HeadwiseAdaOverlayMixin:
         self._last_allocator_stats.update(
             {
                 "surrogate_kv_headwise_ada_overlay": 1,
+                "surrogate_kv_headwise_raw_only_control": int(raw_only_control),
                 "surrogate_kv_headwise_varlen": 1,
                 "surrogate_kv_headwise_uncompressed": 0,
                 "surrogate_kv_headwise_exact_query_heads": int(exact_query_heads),

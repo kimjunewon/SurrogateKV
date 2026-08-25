@@ -5,7 +5,6 @@ import runpy
 import sys
 from pathlib import Path
 
-
 SURROGATEKV_ROOT = Path(__file__).resolve().parents[1]
 
 

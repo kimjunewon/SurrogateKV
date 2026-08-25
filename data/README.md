@@ -1,23 +1,36 @@
 # Experiment Data
 
-This directory keeps compact CSV exports for the experiments reported with this
-codebase, plus selected heatmap images used by the paper. Raw benchmark
-datasets, per-example generations, logs, and local workspace paths are
-intentionally excluded.
+This directory contains compact, machine-readable exports used to reproduce
+the reported tables and figures. Raw datasets, model outputs, logs, and local
+workspace paths are excluded.
 
 ## LongBench
 
-`longbench/llama3_8b_instruct/` contains aggregate Llama-3-8B-Instruct results,
-including the SurrogateKV-Snap, SurrogateKV-Ada, and SurrogateKV-Dynamic budget
-curves and raw/surrogate/drop allocation summaries.
+`longbench/llama3_8b_instruct/` contains:
+
+- the six-budget accuracy curves;
+- the $B_{\mathrm{KV}}=512$ task-group summary;
+- per-dataset appendix values; and
+- RAW, SURROGATE, and DROP allocation summaries.
+
+Rows are aggregate scores unless a filename explicitly identifies token counts
+or rates. The `SurrogateKV` row in the main table export denotes the
+SnapKV-parent variant (`SurrogateKV-Snap`).
 
 ## Needle-in-a-Haystack
 
-`niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/` contains the
-corrected B_KV=128 Mistral-7B-Instruct-v0.2 average scores and heatmap grids for
-SnapKV, DynamicKV, AdaKV, and the corresponding SurrogateKV variants.
-`niah/mistral_7b_instruct_v02/k64_ctx1000_32000_step200/` contains the corrected
-B_KV=64 SurrogateKV-Ada average and heatmap grid. See `../CORRECTIONS.md` for
-the correction scope. The corrected runs used a different worker-concurrency
-layout, so their runner wall time is marked `NA` rather than compared with the
-timing column from the original exports.
+`niah/mistral_7b_instruct_v02/` contains Mistral-7B-Instruct-v0.2 grids. Each
+heatmap CSV stores needle depth in the first column and one column per context
+length. The `k128_ctx1000_32000_step200/` directory contains all parent and
+SurrogateKV variants. The `k64_ctx1000_32000_step200/` directory contains the
+corrected head-aware SurrogateKV-Ada export used in the correction audit.
+
+## Figures
+
+`images/mistral_niah_k128_method_comparison.{png,pdf}` is the current paired
+comparison used in the README. The Ada-only images and dispatch-correction
+panel are retained alongside it for traceability. PNG files render directly on
+GitHub; PDF files preserve vector text for papers and slides.
+
+The July 2026 Ada dispatch correction is described in
+[`../CORRECTIONS.md`](../CORRECTIONS.md).
