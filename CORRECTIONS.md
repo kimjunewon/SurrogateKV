@@ -20,11 +20,9 @@ At $B_{\mathrm{KV}}=128$, the average boundary-depth score changes from 37.56 to
 The correction affects only the Mistral NIAH SurrogateKV-Ada row and its
 derived heatmaps. LongBench and all other NIAH rows are unchanged.
 
-The corrected parent/variant comparison is available as
-[PNG](data/images/mistral_niah_k128_method_comparison.png) and
+The corrected parent/variant comparison is available as a
 [PDF](data/images/mistral_niah_k128_method_comparison.pdf). The original-path
-audit panel is retained as
-[PNG](data/images/mistral_niah_ada_dispatch_correction.png) and
+audit panel is retained as a
 [PDF](data/images/mistral_niah_ada_dispatch_correction.pdf).
 
 The runtime now rejects shared-token `update_kv()` calls for

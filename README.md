@@ -186,9 +186,7 @@ Each score averages 1,560 evaluated placements spanning context lengths from
 
 Source: [`niah_average_table.csv`](data/niah/mistral_7b_instruct_v02/k128_ctx1000_32000_step200/niah_average_table.csv)
 
-[PDF](data/images/mistral_niah_k128_method_comparison.pdf)
-
-![Mistral NIAH parent and SurrogateKV comparison at B_KV=128](data/images/mistral_niah_k128_method_comparison.png)
+[Mistral NIAH parent and SurrogateKV comparison (PDF)](data/images/mistral_niah_k128_method_comparison.pdf)
 
 The corrected head-aware Ada evaluation and its scope are documented in
 [`CORRECTIONS.md`](CORRECTIONS.md).

@@ -27,10 +27,10 @@ corrected head-aware SurrogateKV-Ada export used in the correction audit.
 
 ## Figures
 
-`images/mistral_niah_k128_method_comparison.{png,pdf}` is the current paired
-comparison used in the README. The Ada-only images and dispatch-correction
-panel are retained alongside it for traceability. PNG files render directly on
-GitHub; PDF files preserve vector text for papers and slides.
+`images/mistral_niah_k128_method_comparison.pdf` is the current paired
+comparison linked from the README. The dispatch-correction panel is retained
+alongside it for traceability. Both figures use PDF to preserve vector text for
+papers and slides.
 
 The July 2026 Ada dispatch correction is described in
 [`../CORRECTIONS.md`](../CORRECTIONS.md).

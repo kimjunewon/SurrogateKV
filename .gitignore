@@ -16,5 +16,4 @@ data/**
 !data/**/
 !data/**/*.csv
 !data/**/*.md
-!data/**/*.png
 !data/**/*.pdf
