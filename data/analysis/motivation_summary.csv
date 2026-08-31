@@ -1,0 +1,24 @@
+section,name,value,count
+attention_shift,H2O,0.052796,1024
+attention_shift,SnapKV,0.053389,1024
+attention_shift,PyramidKV,0.055158,1024
+attention_shift,DynamicKV,0.056781,1024
+attention_support_gap,H2O,31.723411,
+attention_support_gap,SnapKV,31.022185,
+attention_support_gap,PyramidKV,28.660627,
+attention_support_gap,DynamicKV,24.681319,
+top5_attention_mass_gap_pp,H2O,5.962600,
+top5_attention_mass_gap_pp,SnapKV,3.792200,
+top5_attention_mass_gap_pp,PyramidKV,4.003200,
+top5_attention_mass_gap_pp,DynamicKV,3.346800,
+top5_attention_mass_gap_pp,Ada-KV,3.553600,
+snapkv_removed_attention,Single-Document QA,0.078468,15360
+snapkv_removed_attention,Multi-Document QA,0.101759,15360
+snapkv_removed_attention,Summarization,0.082015,15360
+snapkv_removed_attention,Few-shot Learning,0.093083,15360
+snapkv_removed_attention,Synthetic,0.047219,10240
+snapkv_removed_attention,Code,0.092357,10240
+chunk_coherence,Random dropped tokens:key_mean_cosine,0.626405,655360
+chunk_coherence,Random dropped tokens:value_mean_cosine,0.373512,655360
+chunk_coherence,SnapKV-dropped local region:key_mean_cosine,0.826914,655360
+chunk_coherence,SnapKV-dropped local region:value_mean_cosine,0.466443,655360

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import math
 import unittest
-from unittest.mock import patch
 
 import torch
 
@@ -25,6 +23,10 @@ class RegistryTests(unittest.TestCase):
     def test_registered_modes_are_unique(self) -> None:
         names = [spec.name for spec in MODE_TO_SPEC.values()]
         self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(
+            set(MODE_TO_SPEC),
+            {"surrogate_kv", "surrogate_kv_ada", "surrogate_kv_dynamic_layer"},
+        )
         for mode, spec in MODE_TO_SPEC.items():
             self.assertEqual(mode, spec.mode)
 
@@ -37,12 +39,7 @@ class RuntimeSmokeTests(unittest.TestCase):
         self.value_states = torch.randn(1, 2, 32, 8)
 
     def test_shared_token_variants_respect_capacity(self) -> None:
-        modes = (
-            "surrogate_kv",
-            "surrogate_kv_dynamic_layer",
-            "surrogate_kv_pyramid",
-            "surrogate_kv_h2o",
-        )
+        modes = ("surrogate_kv", "surrogate_kv_dynamic_layer")
         for mode in modes:
             with self.subTest(mode=mode):
                 cluster = SurKVCluster(
@@ -79,43 +76,32 @@ class RuntimeSmokeTests(unittest.TestCase):
                 num_key_value_groups=1,
             )
 
-    def test_h2o_scores_match_causal_attention(self) -> None:
-        query_states = torch.randn(1, 4, 11, 8)
-        key_states = torch.randn(1, 2, 11, 8)
+    def test_ada_headwise_entry_point_preserves_budget(self) -> None:
         cluster = SurKVCluster(
-            mode="surrogate_kv_h2o",
-            window_size=3,
-            max_capacity_prompt=8,
+            mode="surrogate_kv_ada",
+            window_size=8,
+            max_capacity_prompt=16,
             kernel_size=3,
             chunk_size=4,
         )
-
-        with patch.dict("os.environ", {"SURKV_H2O_SCORE_CHUNK": "4"}):
-            actual = cluster._h2o_head_token_scores(
-                key_states=key_states,
-                query_states=query_states,
-                past_len=8,
-                head_dim=8,
-                num_key_value_groups=2,
-            )
-
-        repeated_keys = key_states.repeat_interleave(2, dim=1)
-        logits = torch.matmul(query_states, repeated_keys.transpose(2, 3)) / math.sqrt(8)
-        causal_mask = torch.triu(
-            torch.full((11, 11), torch.finfo(logits.dtype).min),
-            diagonal=1,
+        compressed_k, compressed_v = cluster.update_kv_headwise(
+            self.key_states,
+            self.query_states,
+            self.value_states,
+            attention_mask=None,
+            num_key_value_groups=1,
         )
-        probabilities = torch.softmax(logits + causal_mask, dim=-1)
-        expected = probabilities[..., :8].sum(dim=-2).to(dtype=torch.float32)
-        torch.testing.assert_close(actual, expected)
-
+        self.assertEqual(compressed_k.shape, compressed_v.shape)
+        self.assertEqual(compressed_k.ndim, 2)
+        self.assertEqual(compressed_k.shape[-1], 8)
+        self.assertLessEqual(compressed_k.shape[0], 2 * 16)
+        self.assertEqual(cluster.last_stats["surrogate_kv_headwise_budget_preserved"], 1)
 
 class ScheduleTests(unittest.TestCase):
     def test_method_families(self) -> None:
         self.assertEqual(surkv_method_family("SurrogateKV-Snap"), "snap")
         self.assertEqual(surkv_method_family("SurrogateKV-Ada"), "ada")
         self.assertEqual(surkv_method_family("SurrogateKV-Dynamic"), "dynamic")
-        self.assertEqual(surkv_method_family("SurrogateKV-Pyramid"), "pyramid")
 
     def test_profile_has_one_entry_per_layer(self) -> None:
         profile = method_capacity_profile(

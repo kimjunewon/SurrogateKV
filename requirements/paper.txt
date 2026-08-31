@@ -1,0 +1,11 @@
+# Core versions reported for the camera-ready experiments.
+torch==2.11.0
+transformers==4.44.2
+
+# LongBench evaluation dependencies.
+numpy>=1.24
+datasets
+fuzzywuzzy
+jieba
+rouge
+tqdm

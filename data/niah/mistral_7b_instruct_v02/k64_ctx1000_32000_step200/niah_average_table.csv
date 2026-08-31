@@ -1,2 +1,7 @@
-method,Method,NIAH Avg,Examples,Mean seconds,Model versions
-surrogatekv-ada,SurrogateKV-Ada,97.60,1560,NA,mistral7b_v02_true_headwise_k64_worker0_surrogatekv-ada_k64_ctx1000_32000_step800;mistral7b_v02_true_headwise_k64_worker1_surrogatekv-ada_k64_ctx1200_32000_step800;mistral7b_v02_true_headwise_k64_worker2_surrogatekv-ada_k64_ctx1400_32000_step800;mistral7b_v02_true_headwise_k64_worker3_surrogatekv-ada_k64_ctx1600_32000_step800
+method,average,examples
+SnapKV,66.08,1560
+SurrogateKV-Snap,85.17,1560
+DynamicKV,95.16,1560
+SurrogateKV-Dynamic,88.97,1560
+Ada-KV,72.13,1560
+SurrogateKV-Ada,97.60,1560

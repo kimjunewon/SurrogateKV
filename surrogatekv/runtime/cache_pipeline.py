@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
@@ -502,74 +501,6 @@ class CachePackingMixin:
 
 
 class CacheScoringMixin:
-    def _h2o_head_token_scores(
-        self,
-        *,
-        key_states,
-        query_states,
-        past_len: int,
-        head_dim: int,
-        num_key_value_groups: int,
-    ):
-        q_len = int(query_states.shape[-2])
-        chunk_size = max(1, int(os.environ.get("SURKV_H2O_SCORE_CHUNK", "128") or 128))
-        bsz = int(query_states.shape[0])
-        query_heads = int(query_states.shape[1])
-        kv_heads = int(key_states.shape[1])
-        scores = torch.zeros(
-            (bsz, query_heads, int(past_len)),
-            device=query_states.device,
-            dtype=torch.float32,
-        )
-
-        key_t = key_states.transpose(2, 3)
-        key_positions = torch.arange(int(key_states.shape[-2]), device=query_states.device)
-        for q_start in range(0, q_len, chunk_size):
-            q_end = min(q_len, q_start + chunk_size)
-            if query_heads == kv_heads:
-                attn_weights = torch.matmul(query_states[:, :, q_start:q_end, :], key_t) / math.sqrt(head_dim)
-            else:
-                grouped_queries = query_states[:, :, q_start:q_end, :].reshape(
-                    bsz,
-                    kv_heads,
-                    int(num_key_value_groups),
-                    q_end - q_start,
-                    head_dim,
-                )
-                attn_weights = torch.einsum(
-                    "bngqd,bndt->bngqt",
-                    grouped_queries,
-                    key_t,
-                ) / math.sqrt(head_dim)
-
-            query_positions = torch.arange(q_start, q_end, device=query_states.device)
-            causal_mask = torch.zeros(
-                (q_end - q_start, int(key_states.shape[-2])),
-                device=query_states.device,
-                dtype=attn_weights.dtype,
-            )
-            causal_mask.masked_fill_(
-                key_positions[None, :] > query_positions[:, None],
-                torch.finfo(attn_weights.dtype).min,
-            )
-            if attn_weights.dim() == 4:
-                attn_weights += causal_mask[None, None, :, :]
-            else:
-                attn_weights += causal_mask[None, None, None, :, :]
-
-            attn_probs = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-            if attn_probs.dim() == 4:
-                scores += attn_probs[:, :, :, :past_len].sum(dim=-2).to(dtype=torch.float32)
-            else:
-                chunk_scores = attn_probs[..., :past_len].sum(dim=-2).reshape(
-                    bsz,
-                    query_heads,
-                    int(past_len),
-                )
-                scores += chunk_scores.to(dtype=torch.float32)
-            del attn_weights, attn_probs
-        return scores
-
     def _past_token_scores(
         self,
         *,
@@ -632,18 +563,6 @@ class CacheScoringMixin:
                 ).to(dtype=torch.float32)
             score_stats = {
                 "surrogate_kv_score_attention": 1,
-            }
-        elif score_method in {"h2o", "h2okv", "heavy_hitter"}:
-            head_token_scores = self._h2o_head_token_scores(
-                key_states=key_states,
-                query_states=query_states,
-                past_len=past_len,
-                head_dim=head_dim,
-                num_key_value_groups=num_key_value_groups,
-            )
-            score_stats = {
-                "surrogate_kv_score_h2o": 1,
-                "surrogate_kv_h2o_score_chunk": int(os.environ.get("SURKV_H2O_SCORE_CHUNK", "128") or 128),
             }
         else:
             raise ValueError(f"Unsupported SurKV score method: {self.score_method}")

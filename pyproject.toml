@@ -2,6 +2,47 @@
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[project]
+name = "surrogatekv"
+version = "0.1.0"
+description = "Representation-preserving KV-cache compression for long-context LLMs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Junwon Kim"},
+    {name = "Junghyun Ryu"},
+    {name = "Farid Talibli"},
+    {name = "Jungmin So"},
+    {name = "Youngjae Kim"},
+]
+dependencies = [
+    "numpy>=1.24",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+longbench = [
+    "datasets",
+    "fuzzywuzzy",
+    "jieba",
+    "rouge",
+    "tqdm",
+    "transformers",
+]
+dev = ["ruff>=0.8"]
+
+[project.urls]
+Repository = "https://github.com/kimjunewon/SurrogateKV"
+Issues = "https://github.com/kimjunewon/SurrogateKV/issues"
+Data = "https://github.com/kimjunewon/SurrogateKV/tree/main/data"
+
+[tool.setuptools.packages.find]
+include = ["surrogatekv*"]
+
+[tool.setuptools]
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

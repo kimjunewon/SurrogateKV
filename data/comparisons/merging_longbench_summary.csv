@@ -1,0 +1,7 @@
+method,budget,average,budget_parameterization
+CaM,128,34.78,fixed_slots
+D2O,128,34.79,released_retention_ratio_target
+SurrogateKV-Snap,128,37.99,fixed_slots
+CaM,512,37.04,fixed_slots
+D2O,512,39.50,released_retention_ratio_target
+SurrogateKV-Snap,512,40.88,fixed_slots

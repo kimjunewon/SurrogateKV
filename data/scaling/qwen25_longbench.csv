@@ -1,0 +1,5 @@
+model,budget,base_method,base_score,surrogate_method,surrogate_score,delta
+Qwen2.5-14B,128,SnapKV,30.34,SurrogateKV-Snap,30.89,0.55
+Qwen2.5-14B,512,SnapKV,32.77,SurrogateKV-Snap,35.49,2.72
+Qwen2.5-72B,128,SnapKV,38.44,SurrogateKV-Snap,38.01,-0.43
+Qwen2.5-72B,512,SnapKV,46.35,SurrogateKV-Snap,48.52,2.16

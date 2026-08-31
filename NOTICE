@@ -1,0 +1,7 @@
+SurrogateKV
+Copyright 2026 SurrogateKV authors
+
+Portions of the runtime integration were developed with reference to the
+open-source implementations of SnapKV, PyramidKV/KVCache-Factory, and AdaKV.
+Their original copyright notices and licenses remain in force. See the
+Acknowledgements section of README.md for project links.

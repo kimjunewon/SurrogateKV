@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use SurrogateKV, please cite the paper below."
+title: "SurrogateKV: Representation-Preserving KV Cache Compression for Long-Context LLMs"
+type: software
+version: 0.1.0
+date-released: 2026-09-01
+repository-code: "https://github.com/kimjunewon/SurrogateKV"
+license: Apache-2.0
+authors:
+  - family-names: Kim
+    given-names: Junwon
+  - family-names: Ryu
+    given-names: Junghyun
+  - family-names: Talibli
+    given-names: Farid
+  - family-names: So
+    given-names: Jungmin
+  - family-names: Kim
+    given-names: Youngjae
+preferred-citation:
+  type: conference-paper
+  title: "SurrogateKV: Representation-Preserving KV Cache Compression for Long-Context LLMs"
+  authors:
+    - family-names: Kim
+      given-names: Junwon
+    - family-names: Ryu
+      given-names: Junghyun
+    - family-names: Talibli
+      given-names: Farid
+    - family-names: So
+      given-names: Jungmin
+    - family-names: Kim
+      given-names: Youngjae
+  collection-title: "Findings of the Association for Computational Linguistics: EMNLP 2026"
+  year: 2026

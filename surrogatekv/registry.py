@@ -63,34 +63,10 @@ SURROGATE_KV_DYNAMIC = MethodSpec(
     head_score_fusion="mean",
 )
 
-SURROGATE_KV_PYRAMID = MethodSpec(
-    name="SurrogateKV-Pyramid",
-    mode="surrogate_kv_pyramid",
-    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
-    dynamic_regioning=True,
-    dynamic_allocator="surrogate_kv",
-    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
-    score_method="attention",
-    head_score_fusion="mean",
-)
-
-SURROGATE_KV_H2O = MethodSpec(
-    name="SurrogateKV-H2O",
-    mode="surrogate_kv_h2o",
-    surrogate_mode=_env_str("SURKV_SURROGATE_MODE", "norm_rms_mean"),
-    dynamic_regioning=True,
-    dynamic_allocator="surrogate_kv",
-    dynamic_anchor_width=_env_int("SURKV_ATOM_SIZE", 4),
-    score_method="h2o",
-    head_score_fusion="mean",
-)
-
 SUPPORTED_SPECS = [
     SURROGATE_KV,
     SURROGATE_KV_ADA,
     SURROGATE_KV_DYNAMIC,
-    SURROGATE_KV_PYRAMID,
-    SURROGATE_KV_H2O,
 ]
 MODE_TO_SPEC: dict[str, MethodSpec] = {spec.mode: spec for spec in SUPPORTED_SPECS}
 METHOD_TO_MODE: dict[str, str] = {spec.name.lower(): spec.mode for spec in SUPPORTED_SPECS}
@@ -123,20 +99,6 @@ METHOD_TO_MODE.update(
         "surrogate_kv_dynamic_layer": SURROGATE_KV_DYNAMIC.mode,
         "surkvdynamiclayer": SURROGATE_KV_DYNAMIC.mode,
         "surkv_dynamic_layer": SURROGATE_KV_DYNAMIC.mode,
-        "surrogatekvpyramid": SURROGATE_KV_PYRAMID.mode,
-        "surrogatekv-pyramid": SURROGATE_KV_PYRAMID.mode,
-        "surrogatekv_pyramid": SURROGATE_KV_PYRAMID.mode,
-        "surrogate_kv_pyramid": SURROGATE_KV_PYRAMID.mode,
-        "surkvpyramid": SURROGATE_KV_PYRAMID.mode,
-        "surkv-pyramid": SURROGATE_KV_PYRAMID.mode,
-        "surkv_pyramid": SURROGATE_KV_PYRAMID.mode,
-        "surrogatekvh2o": SURROGATE_KV_H2O.mode,
-        "surrogatekv-h2o": SURROGATE_KV_H2O.mode,
-        "surrogatekv_h2o": SURROGATE_KV_H2O.mode,
-        "surrogate_kv_h2o": SURROGATE_KV_H2O.mode,
-        "surkvh2o": SURROGATE_KV_H2O.mode,
-        "surkv-h2o": SURROGATE_KV_H2O.mode,
-        "surkv_h2o": SURROGATE_KV_H2O.mode,
     }
 )
 
@@ -163,6 +125,4 @@ __all__ = [
     "SURROGATE_KV",
     "SURROGATE_KV_ADA",
     "SURROGATE_KV_DYNAMIC",
-    "SURROGATE_KV_PYRAMID",
-    "SURROGATE_KV_H2O",
 ]

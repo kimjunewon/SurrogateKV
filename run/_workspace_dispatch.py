@@ -36,6 +36,7 @@ def resolve_workspace_root() -> Path:
     raise SystemExit(
         "Could not locate the SurKV experiment workspace.\n"
         "Set SURKV_WORKSPACE_ROOT to the directory containing tools/ and repos/KVCache-Factory.\n"
+        "See docs/REPRODUCIBILITY.md for the released evaluation scope.\n"
         f"Searched:\n{searched}"
     )
 

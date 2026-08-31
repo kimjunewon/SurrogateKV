@@ -1,0 +1,14 @@
+group,setting,longbench_score,mean_surrogate_entries,workloads,examples_per_workload
+allocation,full_method,42.21,397,16,20
+allocation,raw_drop_only,40.44,0,16,20
+allocation,fixed_quota_0.25,40.51,253,16,20
+allocation,fixed_quota_0.50,40.33,505,16,20
+allocation,fixed_quota_0.75,40.40,757,16,20
+constructor,mean_only,42.17,397,16,20
+constructor,attention_weighted_mean,42.08,397,16,20
+constructor,salience_pivot,42.17,397,16,20
+constructor,cosine_medoid,42.17,397,16,20
+atom_size,c2,42.38,551,16,20
+atom_size,c4,42.21,397,16,20
+atom_size,c8,42.07,339,16,20
+atom_size,c16,41.89,290,16,20

@@ -74,7 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate SurrogateKV LongBench predictions.")
     parser.add_argument("--results_dir", type=Path, required=True)
     parser.add_argument("--datasets", type=str, default=",".join(DATASET2METRIC))
-    parser.add_argument("--methods", type=str, default="SurrogateKV,SurrogateKV-Ada,SurrogateKV-Dynamic")
+    parser.add_argument("--methods", type=str, default="SurrogateKV,SurrogateKV-Dynamic,SurrogateKV-Ada")
     args = parser.parse_args()
 
     datasets = parse_csv_list(args.datasets)
