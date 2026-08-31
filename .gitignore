@@ -24,3 +24,4 @@ data/**
 !data/**/*.md
 !data/**/*.pdf
 !data/**/*.svg
+!data/**/*.drawio

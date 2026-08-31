@@ -1,12 +1,21 @@
 # Third-Party Licenses
 
-SurrogateKV runtime integration was developed with reference to the following
-MIT-licensed projects:
+## Incorporated or Adapted Code
 
-- PyramidKV/KVCache-Factory, Copyright (c) 2024 Zefan Cai
-- AdaKV, Copyright (c) 2024 Yuan Feng
+The following projects informed code distributed in this repository:
 
-Both projects are distributed under the following terms:
+- [LongBench](https://github.com/THUDM/LongBench), Copyright (c) 2023
+  THU-KEG & Zhipu AI. `run/longbench/metrics.py` and the evaluation flow in
+  `run/longbench/eval.py` are adapted from its official evaluator.
+- [PyramidKV/KVCache-Factory](https://github.com/Zefan-Cai/KVCache-Factory),
+  Copyright (c) 2024 Zefan Cai.
+- [AdaKV](https://github.com/FFY0/AdaKV), Copyright (c) 2024 Yuan Feng.
+
+The runtime integration notices appear in `surrogatekv/core.py`,
+`surrogatekv/schedule.py`, and the corresponding modules under
+`surrogatekv/runtime/`.
+
+These projects are distributed under the following MIT License terms:
 
 > MIT License
 >
@@ -28,6 +37,12 @@ Both projects are distributed under the following terms:
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
-SnapKV is distributed under the Apache License 2.0, reproduced in
-[`LICENSE`](LICENSE). Baselines linked from the README are not redistributed
-by this repository and remain subject to their respective licenses.
+The runtime interfaces were also developed with reference to
+[SnapKV](https://github.com/FasterDecoding/SnapKV), which is distributed under
+the Apache License 2.0. A copy of that license is included in [`LICENSE`](LICENSE).
+
+## Linked Baselines
+
+The README links to H2O, DynamicKV, CaM, and D2O for attribution and comparison.
+Their source trees are not redistributed here and remain subject to their own
+licenses.

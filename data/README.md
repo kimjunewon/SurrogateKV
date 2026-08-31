@@ -1,8 +1,8 @@
 # Experiment Data
 
-This directory contains compact CSV exports for the camera-ready paper. Raw
+This directory contains compact CSV exports for the reported experiments. Raw
 benchmark inputs, model checkpoints, generated responses, temporary tensors,
-and local run logs are excluded.
+and machine-specific logs are not redistributed.
 
 ## File Index
 
@@ -14,13 +14,15 @@ and local run logs are excluded.
 | --- | --- |
 | `budget_scores.csv` | Six-budget averages for all baseline and SurrogateKV variants |
 | `per_dataset_scores.csv` | Full per-dataset scores, including FullKV and all allocation groups |
-| `category_scores.csv` | Workload-category scores by method and budget |
+| `category_scores.csv` | Workload-category scores for the shared-token/layer-wise summary plot |
 | `allocation_by_budget.csv` | Raw coverage, surrogate coverage, drop rate, and resident surrogate-slot rate |
 
 LongBench columns use the official metric for each dataset. `average`/`Avg`
 is the unweighted mean across the listed datasets. A surrogate coverage rate
 measures source positions represented by surrogates; it is distinct from the
-number of resident surrogate slots.
+number of resident surrogate slots. In `category_scores.csv`, `SurrogateKV`
+denotes `SurrogateKV-Snap`; all head-wise values remain available in
+`per_dataset_scores.csv`.
 
 ### Needle-in-a-Haystack
 
@@ -31,8 +33,8 @@ number of resident surrogate slots.
 
 Each directory contains a compact average table and one heatmap CSV for each
 matched parent/SurrogateKV pair. Rows are needle depths, columns are context
-lengths, and cells are retrieval accuracy on a 0--100 scale. The corrected
-head-aware grids are the values used in the camera-ready paper; see
+lengths, and cells are retrieval accuracy on a 0--100 scale. The released
+head-aware grids use the per-head evaluation path required by Ada-KV; see
 [`../CORRECTIONS.md`](../CORRECTIONS.md).
 
 ### Analysis and Ablations
@@ -42,6 +44,9 @@ head-aware grids are the values used in the camera-ready paper; see
 | `analysis/motivation_summary.csv` | Attention-mass change and KV-region coherence diagnostics |
 | `attention/k64_workload_summary.csv` | Attention-shift summaries by workload and method |
 | `ablations/longbench_b512.csv` | Allocation, constructor, and atom-size ablations |
+
+The attention CSV contains the workload-level statistics reported with the
+diagnostic; it is not a per-example or layer-head tensor dump.
 
 The ablation table uses 20 examples per workload across the 16 listed
 LongBench workloads, matching the paper's ablation setting. `full_method`
@@ -64,8 +69,11 @@ buffers, as specified in the paper.
 
 ### Figures
 
-`images/` contains archival PDFs and GitHub-preview SVGs for the method
-overview, the LongBench budget sweep, and the Mistral NIAH comparison.
+`images/` contains archival PDFs and transparent, theme-aware SVG previews for
+the method overview, LongBench budget sweep, and Mistral NIAH comparison. The
+LongBench and NIAH previews are generated directly from the CSVs above with
+`scripts/build_readme_figures.py`. The editable draw.io source for the method
+overview is stored under `images/source/`.
 
 ## Validation
 
@@ -73,6 +81,8 @@ From the repository root:
 
 ```bash
 python3 scripts/validate_release.py
+python3 -m pip install -e ".[plots]"
+python3 scripts/build_readme_figures.py
 ```
 
 The validator checks schemas, row coverage, key paper values, LongBench

@@ -1,3 +1,7 @@
+# Layer-wise runtime integration developed with reference to
+# KVCache-Factory/PyramidKV (MIT), with SurrogateKV modifications.
+# See NOTICE and THIRD_PARTY_LICENSES.md.
+
 from __future__ import annotations
 
 import heapq

@@ -32,6 +32,12 @@ do not require the companion workspace.
 One retained raw KV pair and one surrogate KV pair each consume one resident
 slot. Generated-token KV is appended identically for all methods.
 
+The shared-token and layer-wise modes construct mean-pooled, norm-calibrated
+surrogates. The released head-wise profile selects the highest-salience
+representative KV pair within each admitted region. Set
+`SURKV_HEADWISE_SURROGATE_PROTO=mean` to select mean-plus-norm construction for
+head-wise runs.
+
 ## Released Checks
 
 The data validator has no third-party dependencies:
@@ -47,9 +53,14 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q surrogatekv run scripts
 ```
 
+README figures can be regenerated from the released CSVs with:
+
+```bash
+python3 -m pip install -e ".[plots]"
+python3 scripts/build_readme_figures.py
+```
+
 ## Data Provenance
 
-The files under `data/` are compact exports from the final camera-ready tables
-and plots. `data/README.md` records the interpretation of each file. Values
-that were not retained in the final paper, including exploratory parent-method
-combinations, are intentionally omitted from this release.
+The files under `data/` are compact exports of the reported tables and selected
+plots. `data/README.md` records the scope and interpretation of each file.

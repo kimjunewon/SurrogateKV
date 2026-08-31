@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -77,25 +79,34 @@ class RuntimeSmokeTests(unittest.TestCase):
             )
 
     def test_ada_headwise_entry_point_preserves_budget(self) -> None:
-        cluster = SurKVCluster(
-            mode="surrogate_kv_ada",
-            window_size=8,
-            max_capacity_prompt=16,
-            kernel_size=3,
-            chunk_size=4,
-        )
-        compressed_k, compressed_v = cluster.update_kv_headwise(
-            self.key_states,
-            self.query_states,
-            self.value_states,
-            attention_mask=None,
-            num_key_value_groups=1,
-        )
-        self.assertEqual(compressed_k.shape, compressed_v.shape)
-        self.assertEqual(compressed_k.ndim, 2)
-        self.assertEqual(compressed_k.shape[-1], 8)
-        self.assertLessEqual(compressed_k.shape[0], 2 * 16)
-        self.assertEqual(cluster.last_stats["surrogate_kv_headwise_budget_preserved"], 1)
+        for prototype_mode in ("peak", "mean"):
+            with (
+                self.subTest(prototype_mode=prototype_mode),
+                patch.dict(
+                    os.environ,
+                    {"SURKV_HEADWISE_SURROGATE_PROTO": prototype_mode},
+                ),
+            ):
+                cluster = SurKVCluster(
+                    mode="surrogate_kv_ada",
+                    window_size=8,
+                    max_capacity_prompt=16,
+                    kernel_size=3,
+                    chunk_size=4,
+                )
+                compressed_k, compressed_v = cluster.update_kv_headwise(
+                    self.key_states,
+                    self.query_states,
+                    self.value_states,
+                    attention_mask=None,
+                    num_key_value_groups=1,
+                )
+                self.assertEqual(compressed_k.shape, compressed_v.shape)
+                self.assertEqual(compressed_k.ndim, 2)
+                self.assertEqual(compressed_k.shape[-1], 8)
+                self.assertLessEqual(compressed_k.shape[0], 2 * 16)
+                self.assertEqual(cluster.last_stats["surrogate_kv_headwise_budget_preserved"], 1)
+
 
 class ScheduleTests(unittest.TestCase):
     def test_method_families(self) -> None:

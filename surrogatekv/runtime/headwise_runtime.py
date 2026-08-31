@@ -1,3 +1,7 @@
+# Head-wise runtime integration adapted in part from AdaKV (MIT) and SnapKV
+# (Apache-2.0), with SurrogateKV modifications.
+# See NOTICE and THIRD_PARTY_LICENSES.md.
+
 from __future__ import annotations
 
 import math

@@ -1,3 +1,6 @@
+# Metric definitions adapted from THUDM/LongBench (MIT License).
+# Copyright (c) 2023 THU-KEG & Zhipu AI. See THIRD_PARTY_LICENSES.md.
+
 from __future__ import annotations
 
 import re

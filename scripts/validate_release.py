@@ -18,6 +18,14 @@ COMPRESSED_METHODS = {
     "SurrogateKV-Dynamic",
     "SurrogateKV-Ada",
 }
+DATASET_GROUPS = {
+    "single_document_qa": ("narrativeqa", "qasper", "multifieldqa_en"),
+    "multi_document_qa": ("hotpotqa", "2wikimqa", "musique"),
+    "summarization": ("gov_report", "qmsum", "multi_news"),
+    "few_shot_learning": ("trec", "triviaqa", "samsum"),
+    "synthetic": ("passage_count", "passage_retrieval_en"),
+    "code": ("lcc", "repobench_p"),
+}
 
 
 def read_rows(relative_path: str) -> list[dict[str, str]]:
@@ -40,10 +48,7 @@ def validate_longbench() -> None:
     assert {row["method"] for row in budgets} == COMPRESSED_METHODS
     assert {int(row["budget"]) for row in budgets} == BUDGETS
 
-    budget_lookup = {
-        (row["method"], row["budget"]): float(row["average"])
-        for row in budgets
-    }
+    budget_lookup = {(row["method"], row["budget"]): float(row["average"]) for row in budgets}
     close(budget_lookup[("SnapKV", "512")], 40.26)
     close(budget_lookup[("SurrogateKV-Snap", "512")], 40.8819)
     close(budget_lookup[("DynamicKV", "512")], 40.6050)
@@ -62,6 +67,30 @@ def validate_longbench() -> None:
             continue
         close(float(row["average"]), budget_lookup[(row["method"], row["budget"])])
 
+    per_dataset_lookup = {(row["method"], row["budget"]): row for row in per_dataset}
+    categories = read_rows(f"{prefix}/category_scores.csv")
+    category_method_keys = {("FullKV", "")}
+    category_method_keys.update(
+        (method, str(budget))
+        for method in ("H2O", "SnapKV", "PyramidKV", "DynamicKV", "SurrogateKV")
+        for budget in BUDGETS
+    )
+    assert len(categories) == len(category_method_keys) * (len(DATASET_GROUPS) + 1)
+    for row in categories:
+        category_key = (row["method"], row["target_budget_tokens"])
+        assert category_key in category_method_keys
+        source_method = "SurrogateKV-Snap" if row["method"] == "SurrogateKV" else row["method"]
+        source = per_dataset_lookup[(source_method, row["target_budget_tokens"])]
+        if row["type_slug"] == "average":
+            expected = float(source["average"])
+            expected_count = sum(len(columns) for columns in DATASET_GROUPS.values())
+        else:
+            columns = DATASET_GROUPS[row["type_slug"]]
+            expected = sum(float(source[column]) for column in columns) / len(columns)
+            expected_count = len(columns)
+        close(float(row["score"]), expected)
+        assert int(row["num_datasets"]) == expected_count
+
     allocations = read_rows(f"{prefix}/allocation_by_budget.csv")
     assert len(allocations) == 18
     assert {row["method"] for row in allocations} == {
@@ -70,10 +99,7 @@ def validate_longbench() -> None:
         "SurrogateKV-Ada",
     }
     for row in allocations:
-        coverage = sum(
-            float(row[key])
-            for key in ("raw_region_pct", "surrogate_coverage_pct", "drop_region_pct")
-        )
+        coverage = sum(float(row[key]) for key in ("raw_region_pct", "surrogate_coverage_pct", "drop_region_pct"))
         close(coverage, 100.0, tolerance=0.001)
 
 
@@ -115,20 +141,16 @@ def validate_tables() -> None:
     assert int(ablation_lookup["c4"]["mean_surrogate_entries"]) == 397
 
     merging = read_rows("comparisons/merging_longbench_summary.csv")
-    merging_lookup = {
-        (row["method"], int(row["budget"])): float(row["average"])
-        for row in merging
-    }
+    merging_lookup = {(row["method"], int(row["budget"])): float(row["average"]) for row in merging}
     close(merging_lookup[("SurrogateKV-Snap", 128)], 37.99)
     close(merging_lookup[("D2O", 512)], 39.50)
+    merging_per_dataset = read_rows("comparisons/merging_longbench_per_dataset.csv")
+    for row in merging_per_dataset:
+        close(float(row["average"]), merging_lookup[(row["method"], int(row["budget"]))])
 
     efficiency = read_rows("efficiency/llama3_8b_instruct_b128.csv")
     assert len(efficiency) == 21
-    main = {
-        row["method"]: row
-        for row in efficiency
-        if int(row["input_tokens"]) == 32768
-    }
+    main = {row["method"]: row for row in efficiency if int(row["input_tokens"]) == 32768}
     close(float(main["SurrogateKV-Ada"]["ttft_s"]), 4.44)
     for base, variant in (
         ("SnapKV", "SurrogateKV-Snap"),
@@ -145,8 +167,27 @@ def validate_tables() -> None:
         close(delta, float(row["delta"]))
 
 
+def validate_figure_assets() -> None:
+    required = (
+        "images/longbench_budget_results.pdf",
+        "images/longbench_budget_results.svg",
+        "images/longbench_budget_results-dark.svg",
+        "images/mistral_niah_k128_method_comparison.pdf",
+        "images/mistral_niah_k128_method_comparison.svg",
+        "images/mistral_niah_k128_method_comparison-dark.svg",
+        "images/surrogatekv_overview.pdf",
+        "images/surrogatekv_overview.svg",
+        "images/surrogatekv_overview-dark.svg",
+        "images/source/surrogatekv_overview.drawio",
+    )
+    for relative_path in required:
+        path = DATA / relative_path
+        if not path.is_file() or path.stat().st_size == 0:
+            raise AssertionError(f"missing or empty figure asset: {path.relative_to(ROOT)}")
+
+
 def validate_no_local_paths() -> None:
-    extensions = {".csv", ".md", ".toml", ".cff", ".py", ".txt"}
+    extensions = {".cff", ".csv", ".drawio", ".md", ".py", ".svg", ".toml", ".txt", ".yaml", ".yml"}
     forbidden = ("/home/", "/mnt/", "SurKV-camera-ready/artifacts")
     for path in ROOT.rglob("*"):
         if (
@@ -166,6 +207,7 @@ def main() -> None:
     validate_longbench()
     validate_niah()
     validate_tables()
+    validate_figure_assets()
     validate_no_local_paths()
     print("Release data validation passed.")
 

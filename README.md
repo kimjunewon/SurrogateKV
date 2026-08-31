@@ -16,17 +16,27 @@ SurrogateKV-Snap, SurrogateKV-Dynamic, and SurrogateKV-Ada.
 
 <p align="center">
   <a href="data/images/surrogatekv_overview.pdf">
-    <img src="data/images/surrogatekv_overview.svg" alt="SurrogateKV runtime overview" width="900">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="data/images/surrogatekv_overview-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="data/images/surrogatekv_overview.svg">
+      <img src="data/images/surrogatekv_overview.svg" alt="SurrogateKV runtime overview" width="900">
+    </picture>
   </a>
 </p>
+
+The editable source for the overview is available as a
+[draw.io file](data/images/source/surrogatekv_overview.drawio). The diagram
+shows the mean-plus-norm constructor; the released head-wise profile is noted
+under [Variants](#variants).
 
 ## Contents
 
 - `surrogatekv/`: allocation, surrogate construction, packing, and runtime API
 - `run/longbench/`: LongBench wrappers and evaluator
-- `data/`: machine-readable values for the paper's tables and figures
+- `data/`: machine-readable values for reported tables and selected figures
 - `tests/`: runtime and registry checks
 - `scripts/validate_release.py`: consistency checks for released result files
+- `scripts/build_readme_figures.py`: README figures generated from released CSVs
 
 Model weights, benchmark datasets, generated responses, and machine-specific
 logs are not included.
@@ -45,7 +55,7 @@ Python 3.10 or newer is required. Install the LongBench dependencies with:
 python3 -m pip install -e ".[longbench]"
 ```
 
-The core versions reported for the camera-ready experiments are listed in
+The core versions used for the paper experiments are listed in
 [`requirements/paper.txt`](requirements/paper.txt).
 
 ## Variants
@@ -58,6 +68,12 @@ The core versions reported for the camera-ready experiments are listed in
 
 `SurrogateKV` is an alias of `SurrogateKV-Snap`. Method names and aliases are
 available through `SURROGATEKV_METHOD_TO_MODE`.
+
+The shared-token and layer-wise modes use mean-pooled, norm-calibrated
+surrogate KV pairs. The released head-wise profile uses the highest-salience
+representative KV pair in each admitted region. Set
+`SURKV_HEADWISE_SURROGATE_PROTO=mean` to use mean-plus-norm construction in
+head-wise mode.
 
 ## Runtime API
 
@@ -91,12 +107,12 @@ point in `surrogate_kv_ada` mode raises an error.
 
 ## Evaluation
 
-The compact result release and the evaluator are self-contained. The
-LongBench prediction wrappers dispatch to the KVCache-Factory adapter used in
-the paper, which lives in the companion experiment workspace and is not
+The result CSVs and saved-prediction evaluator are self-contained. End-to-end
+LongBench prediction generation dispatches to the KVCache-Factory adapter used
+in the paper, which lives in the companion experiment workspace and is not
 vendored into this repository. Set `SURKV_WORKSPACE_ROOT` to a workspace that
-contains `tools/run_surkv_longbench.py` and `repos/KVCache-Factory` before
-using those wrappers.
+contains `tools/run_surkv_longbench.py` and `repos/KVCache-Factory` before using
+the prediction wrappers.
 
 ```bash
 export SURKV_WORKSPACE_ROOT=/path/to/SurKV
@@ -134,7 +150,11 @@ LLaMA-3-8B-Instruct at `B_KV = 512` (FullKV: 41.92):
 
 <p align="center">
   <a href="data/images/longbench_budget_results.pdf">
-    <img src="data/images/longbench_budget_results.svg" alt="LongBench scores across KV cache budgets" width="780">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="data/images/longbench_budget_results-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="data/images/longbench_budget_results.svg">
+      <img src="data/images/longbench_budget_results.svg" alt="LongBench scores across KV cache budgets" width="860">
+    </picture>
   </a>
 </p>
 
@@ -153,22 +173,30 @@ Mistral-7B-Instruct-v0.2 at `B_KV = 128`:
 
 <p align="center">
   <a href="data/images/mistral_niah_k128_method_comparison.pdf">
-    <img src="data/images/mistral_niah_k128_method_comparison.svg" alt="Mistral NIAH comparison at B_KV=128" width="760">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="data/images/mistral_niah_k128_method_comparison-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="data/images/mistral_niah_k128_method_comparison.svg">
+      <img src="data/images/mistral_niah_k128_method_comparison.svg" alt="Mistral NIAH comparison at B_KV=128" width="820">
+    </picture>
   </a>
 </p>
 
 The heatmap grids for `B_KV = 64` and `128` are released under
-[`data/niah/`](data/niah/). The head-wise evaluation correction is documented
+[`data/niah/`](data/niah/). The required head-wise evaluation path is recorded
 in [`CORRECTIONS.md`](CORRECTIONS.md).
 
 ## Released Data
 
 [`data/README.md`](data/README.md) indexes the CSV files for LongBench, NIAH,
 motivation and attention diagnostics, ablations, merging comparisons, serving
-efficiency, and model scaling. Run the data checks with:
+efficiency, and model scaling. CSV is the canonical tabular format; duplicate
+JSON exports are not needed to regenerate the released summaries. Run the data
+checks and rebuild the README figures with:
 
 ```bash
 python3 scripts/validate_release.py
+python3 -m pip install -e ".[plots]"
+python3 scripts/build_readme_figures.py
 ```
 
 ## Development
@@ -192,15 +220,17 @@ python3 -m ruff check surrogatekv run tests scripts
 
 Machine-readable citation metadata is available in [`CITATION.cff`](CITATION.cff).
 
-## License and Acknowledgements
+## License and Third-Party Attribution
 
 SurrogateKV is released under the [Apache License 2.0](LICENSE). The runtime
 and evaluation interfaces were developed with reference to the official
 implementations of [SnapKV](https://github.com/FasterDecoding/SnapKV),
 [PyramidKV/KVCache-Factory](https://github.com/Zefan-Cai/KVCache-Factory), and
-[AdaKV](https://github.com/FFY0/AdaKV). The paper also evaluates or discusses
-[H2O](https://github.com/FMInference/H2O),
-[DynamicKV](https://github.com/DreamMr/DynamicKV), and
+[AdaKV](https://github.com/FFY0/AdaKV). The evaluator includes code adapted
+from [LongBench](https://github.com/THUDM/LongBench). The paper also evaluates
+or discusses [H2O](https://github.com/FMInference/H2O),
+[DynamicKV](https://github.com/DreamMr/DynamicKV),
+[CaM](https://github.com/zyxxmu/cam), and
 [D2O](https://github.com/AIoT-MLSys-Lab/D2O).
 Third-party license notices are collected in
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).

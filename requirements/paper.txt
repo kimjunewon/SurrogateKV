@@ -1,4 +1,4 @@
-# Core versions reported for the camera-ready experiments.
+# Core versions used for the paper experiments.
 torch==2.11.0
 transformers==4.44.2
 

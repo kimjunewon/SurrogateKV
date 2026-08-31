@@ -1,3 +1,7 @@
+# Runtime integration adapted in part from SnapKV (Apache-2.0),
+# KVCache-Factory, and AdaKV (MIT), with SurrogateKV modifications.
+# See NOTICE and THIRD_PARTY_LICENSES.md.
+
 from __future__ import annotations
 
 import math

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+# Evaluation flow and dataset-to-metric mapping adapted from THUDM/LongBench
+# (MIT License). Copyright (c) 2023 THU-KEG & Zhipu AI.
+# See THIRD_PARTY_LICENSES.md.
+
 from __future__ import annotations
 
 import argparse
