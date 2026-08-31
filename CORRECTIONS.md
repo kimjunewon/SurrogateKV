@@ -29,15 +29,6 @@ open the [vector PDF](data/images/mistral_niah_k128_method_comparison.pdf).
   </a>
 </p>
 
-The original-path audit panel is retained below for traceability; select it to
-open the [vector PDF](data/images/mistral_niah_ada_dispatch_correction.pdf).
-
-<p align="center">
-  <a href="data/images/mistral_niah_ada_dispatch_correction.pdf">
-    <img src="data/images/mistral_niah_ada_dispatch_correction.svg" alt="Mistral NIAH Ada dispatch correction audit" width="760">
-  </a>
-</p>
-
 The runtime now rejects shared-token `update_kv()` calls for
 `surrogate_kv_ada`; integrations must use `update_kv_headwise()` so that the
 per-head layout is preserved.

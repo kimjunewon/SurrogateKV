@@ -14,6 +14,12 @@ contains ordinary KV pairs and uses standard attention during decoding.
 SurrogateKV is evaluated on three base compressors. The resulting variants are
 SurrogateKV-Snap, SurrogateKV-Dynamic, and SurrogateKV-Ada.
 
+<p align="center">
+  <a href="data/images/surrogatekv_overview.pdf">
+    <img src="data/images/surrogatekv_overview.svg" alt="SurrogateKV runtime overview" width="900">
+  </a>
+</p>
+
 ## Contents
 
 - `surrogatekv/`: allocation, surrogate construction, packing, and runtime API
@@ -125,6 +131,12 @@ LLaMA-3-8B-Instruct at `B_KV = 512` (FullKV: 41.92):
 | Shared token | SnapKV | 40.26 | SurrogateKV-Snap | **40.88** | +0.62 |
 | Layer-wise | DynamicKV | 40.60 | SurrogateKV-Dynamic | **40.81** | +0.20 |
 | Head-wise | Ada-KV | 40.77 | SurrogateKV-Ada | **41.26** | +0.49 |
+
+<p align="center">
+  <a href="data/images/longbench_budget_results.pdf">
+    <img src="data/images/longbench_budget_results.svg" alt="LongBench scores across KV cache budgets" width="780">
+  </a>
+</p>
 
 The six-budget curves and per-dataset scores are in
 [`data/longbench/llama3_8b_instruct/`](data/longbench/llama3_8b_instruct/).

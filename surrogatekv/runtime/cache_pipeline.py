@@ -27,13 +27,6 @@ class CacheStateMixin:
         if not enable:
             self.last_layout_meta = None
 
-    def export_pd_state(self):
-        return {
-            "mode": self.mode,
-            "stats": dict(self.last_stats or {}),
-            "layout_meta": self.last_layout_meta,
-        }
-
     def enable_surrogate_saving(self, enable: bool = True):
         """Enable or disable surrogate saving. Default: False (zero overhead)."""
         self._save_surrogates = bool(enable)

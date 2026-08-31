@@ -64,8 +64,8 @@ buffers, as specified in the paper.
 
 ### Figures
 
-`images/` contains the archival PDF and GitHub-preview SVG for the Mistral NIAH
-comparison. The dispatch-correction panel is retained for traceability.
+`images/` contains archival PDFs and GitHub-preview SVGs for the method
+overview, the LongBench budget sweep, and the Mistral NIAH comparison.
 
 ## Validation
 

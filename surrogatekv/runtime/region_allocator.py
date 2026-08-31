@@ -766,13 +766,6 @@ def allocate_surrogate_regions(
             end_idx,
         )
 
-    def estimate_initial_buyback_credit(slot_count: int) -> float:
-        return _estimate_raw_buyback_credit(
-            initial_buyback_prefix_len,
-            initial_buyback_prefix_value,
-            slot_count,
-        )
-
     def score_static_surrogate_gain(
         *,
         value: float,
@@ -923,7 +916,6 @@ def allocate_surrogate_regions(
                 break
             gain, value, sold_loss, budget_delta, token_len = metrics
             split_gain = float(left[0]) + float(right[0])
-            split_delta = int(left[3]) + int(right[3])
             if float(gain) <= 0.0 or float(gain) <= float(split_gain):
                 break
             merged: Candidate = (
@@ -946,14 +938,12 @@ def allocate_surrogate_regions(
     online_buyback_atoms = 0
     online_buyback_tokens = 0
     online_buyback_value = 0.0
-    current_drop_tokens = int(atom_len_int_arr[actions == 0].sum())
     buy_cursor = 0
 
     def buy_raw_until_full() -> None:
         nonlocal buy_cursor
         nonlocal current_cost
         nonlocal online_buyback_atoms, online_buyback_tokens, online_buyback_value
-        nonlocal current_drop_tokens
         while int(current_cost) < int(budget_entries) and int(buy_cursor) < len(initial_buyback_order_list):
             atom_idx = int(initial_buyback_order_list[int(buy_cursor)])
             if int(current_cost) >= int(budget_entries):
@@ -966,7 +956,6 @@ def allocate_surrogate_regions(
                 break
             actions[int(atom_idx)] = 2
             current_cost += int(atom_len)
-            current_drop_tokens -= int(atom_len)
             online_buyback_atoms += 1
             online_buyback_tokens += int(atom_len)
             online_buyback_value += float(raw_value_arr[int(atom_idx)])
@@ -975,7 +964,6 @@ def allocate_surrogate_regions(
     def buy_raw_best_effort() -> None:
         nonlocal current_cost
         nonlocal online_buyback_atoms, online_buyback_tokens, online_buyback_value
-        nonlocal current_drop_tokens
         if int(current_cost) >= int(budget_entries):
             return
         if bool(can_fast_best_effort_fill):
@@ -1019,7 +1007,6 @@ def allocate_surrogate_regions(
                     selected_value = float(raw_value_arr[selected].sum())
                     actions[selected] = 2
                     current_cost += int(selected_tokens)
-                    current_drop_tokens -= int(selected_tokens)
                     online_buyback_atoms += int(selected.size)
                     online_buyback_tokens += int(selected_tokens)
                     online_buyback_value += float(selected_value)
@@ -1033,7 +1020,6 @@ def allocate_surrogate_regions(
                 continue
             actions[atom_idx] = 2
             current_cost += int(atom_len)
-            current_drop_tokens -= int(atom_len)
             online_buyback_atoms += 1
             online_buyback_tokens += int(atom_len)
             online_buyback_value += float(raw_value_arr[atom_idx])
@@ -1273,9 +1259,7 @@ def allocate_surrogate_regions(
         if payer_atoms:
             payer_arr = np.asarray(payer_atoms, dtype=np.int64)
             actions[payer_arr] = 0
-            current_drop_tokens += int(payer_tokens)
         actions[start_idx:end_idx] = 1
-        current_drop_tokens -= int(drop_tokens_inside)
         current_cost += int(budget_delta) - int(payer_tokens)
         selected_surrogates += 1
         selected_gain += float(gain)
