@@ -1,4 +1,6 @@
-# Core versions used for the paper experiments.
+# Historical versions used for the paper experiments. Use this file only in an
+# isolated reproduction environment with trusted model and dataset artifacts.
+# For ordinary use, install the package through pyproject.toml instead.
 torch==2.11.0
 transformers==4.44.2
 

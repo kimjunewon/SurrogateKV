@@ -55,8 +55,9 @@ Python 3.10 or newer is required. Install the LongBench dependencies with:
 python3 -m pip install -e ".[longbench]"
 ```
 
-The core versions used for the paper experiments are listed in
-[`requirements/paper.txt`](requirements/paper.txt).
+The exact versions used for the paper experiments are recorded in
+[`requirements/paper.txt`](requirements/paper.txt) for controlled reproduction.
+They are historical pins; use the standard installation above for ordinary use.
 
 ## Variants
 
