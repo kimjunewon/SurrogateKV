@@ -2,7 +2,7 @@
 # isolated reproduction environment with trusted model and dataset artifacts.
 # For ordinary use, install the package through pyproject.toml instead.
 torch==2.11.0
-transformers==4.44.2
+transformers==5.10.1
 
 # LongBench evaluation dependencies.
 numpy>=1.24
