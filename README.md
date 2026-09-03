@@ -160,6 +160,7 @@ LLaMA-3-8B-Instruct at `B_KV = 512` (FullKV: 41.92):
 
 The six-budget curves and per-dataset scores are in
 [`data/longbench/llama3_8b_instruct/`](data/longbench/llama3_8b_instruct/).
+The x-axis uses a base-2 logarithmic scale because each budget doubles.
 
 ### Needle-in-a-Haystack
 

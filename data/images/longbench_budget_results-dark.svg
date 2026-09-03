@@ -110,7 +110,7 @@ L 0 3
      </g>
     </g>
     <g id="text_7">
-     <text style="fill: #e6edf3; font: 9px 'DejaVu Sans'; text-anchor: middle" x="144.31815" y="206.835312" transform="rotate(-0 144.31815 206.835312)">KV cache budget</text>
+     <text style="fill: #e6edf3; font: 9px 'DejaVu Sans'; text-anchor: middle" x="144.31815" y="206.835312" transform="rotate(-0 144.31815 206.835312)">KV cache budget (log2 scale)</text>
     </g>
    </g>
    <g id="matplotlib.axis_2">
@@ -259,7 +259,7 @@ L 33.402813 17.990406
 " style="fill: none; stroke: #8b949e; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_4">
-    <path d="M 33.402813 181.286406
+    <path d="M 33.402812 181.286406
 L 255.233487 181.286406
 " style="fill: none; stroke: #8b949e; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
@@ -416,7 +416,7 @@ L 505.90215 25.119064
      </g>
     </g>
     <g id="text_25">
-     <text style="fill: #e6edf3; font: 9px 'DejaVu Sans'; text-anchor: middle" x="394.986813" y="206.835312" transform="rotate(-0 394.986813 206.835312)">KV cache budget</text>
+     <text style="fill: #e6edf3; font: 9px 'DejaVu Sans'; text-anchor: middle" x="394.986813" y="206.835312" transform="rotate(-0 394.986813 206.835312)">KV cache budget (log2 scale)</text>
     </g>
    </g>
    <g id="matplotlib.axis_4">
@@ -699,7 +699,7 @@ L 756.570813 25.119064
      </g>
     </g>
     <g id="text_37">
-     <text style="fill: #e6edf3; font: 9px 'DejaVu Sans'; text-anchor: middle" x="645.655475" y="206.835312" transform="rotate(-0 645.655475 206.835312)">KV cache budget</text>
+     <text style="fill: #e6edf3; font: 9px 'DejaVu Sans'; text-anchor: middle" x="645.655475" y="206.835312" transform="rotate(-0 645.655475 206.835312)">KV cache budget (log2 scale)</text>
     </g>
    </g>
    <g id="matplotlib.axis_6">

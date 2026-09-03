@@ -123,7 +123,7 @@ def build_longbench(theme_name: str) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(10.8, 3.15), sharex=True, sharey=True)
     fig.patch.set_alpha(0.0)
-    x = np.arange(len(BUDGETS), dtype=float)
+    x = np.asarray(BUDGETS, dtype=float)
 
     for group_index, (title, methods) in enumerate(GROUPS):
         ax = axes[group_index]
@@ -151,9 +151,11 @@ def build_longbench(theme_name: str) -> None:
             )
 
         ax.set_title(title, fontsize=10.2, pad=7.0, fontweight="semibold")
-        ax.set_xticks(x, labels=("64", "128", "256", "512", "1K", "2K"))
-        ax.set_xlabel("KV cache budget")
-        ax.set_xlim(-0.18, len(BUDGETS) - 0.82)
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(BUDGETS, labels=("64", "128", "256", "512", "1K", "2K"))
+        ax.tick_params(axis="x", which="minor", bottom=False)
+        ax.set_xlabel("KV cache budget (log2 scale)")
+        ax.set_xlim(64 / (2**0.18), 2048 * (2**0.18))
         ax.set_ylim(32.5, 42.35)
         ax.set_yticks((34, 36, 38, 40, 42))
         ax.grid(axis="y", color=colors["grid"], linewidth=0.65, alpha=0.9)
