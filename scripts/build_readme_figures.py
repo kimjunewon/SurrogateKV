@@ -176,9 +176,9 @@ def build_longbench(theme_name: str) -> None:
     fig.subplots_adjust(left=0.065, right=0.995, top=0.90, bottom=0.18, wspace=0.13)
 
     suffix = "-dark" if theme_name == "dark" else ""
-    save_figure(fig, IMAGES / f"longbench_budget_results{suffix}.svg")
+    save_figure(fig, IMAGES / f"longbench_budget_sweep{suffix}.svg")
     if theme_name == "light":
-        save_figure(fig, IMAGES / "longbench_budget_results.pdf")
+        save_figure(fig, IMAGES / "longbench_budget_sweep.pdf")
     plt.close(fig)
 
 

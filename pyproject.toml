@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 longbench = [
+    "accelerate",
     "datasets",
     "fuzzywuzzy",
     "jieba",

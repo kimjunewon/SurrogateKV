@@ -414,7 +414,9 @@ class HeadwiseAdaOverlayMixin:
                 "surrogate_kv_headwise_prompt_capacity_max": int(prompt_caps.max().detach().cpu().item()),
                 "surrogate_kv_headwise_prompt_capacity_mean": float(prompt_float.mean().detach().cpu().item()),
                 "surrogate_kv_headwise_budget_gap_min": int(budget_gap_t.min().detach().cpu().item()),
-                "surrogate_kv_headwise_budget_gap_mean": float(budget_gap_t.to(dtype=torch.float32).mean().detach().cpu().item()),
+                "surrogate_kv_headwise_budget_gap_mean": float(
+                    budget_gap_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
                 "surrogate_kv_headwise_budget_overflow_max": int(head_budget_overflow.max().detach().cpu().item()),
                 "surrogate_kv_headwise_budget_preserved": int(int(head_budget_overflow.max().detach().cpu().item()) == 0),
                 "surrogate_kv_headwise_head_len_min": int(min(head_lens) if head_lens else 0),
@@ -422,14 +424,30 @@ class HeadwiseAdaOverlayMixin:
                 "surrogate_kv_headwise_head_len_mean": float(sum(head_lens) / max(1, len(head_lens))),
                 "surrogate_kv_headwise_precomputed_scores": 1,
                 "surrogate_kv_timing_update_score_seconds": float(score_seconds),
-                "surrogate_kv_headwise_child_mean_ks_run_raw_tokens": float(raw_tokens_t.to(dtype=torch.float32).mean().detach().cpu().item()),
-                "surrogate_kv_headwise_child_mean_ks_run_raw_regions": float(sum(raw_regions_per_head) / max(1, len(raw_regions_per_head))),
-                "surrogate_kv_headwise_child_mean_ks_run_surrogate_regions": float(surrogate_regions_t.to(dtype=torch.float32).mean().detach().cpu().item()),
-                "surrogate_kv_headwise_child_mean_ks_run_surrogate_tokens": float(surrogate_tokens_t.to(dtype=torch.float32).mean().detach().cpu().item()),
-                "surrogate_kv_headwise_child_mean_ks_run_drop_tokens": float(drop_tokens_t.to(dtype=torch.float32).mean().detach().cpu().item()),
-                "surrogate_kv_headwise_child_mean_ks_run_used_entries": float(used_entries_t.to(dtype=torch.float32).mean().detach().cpu().item()),
-                "surrogate_kv_headwise_child_mean_ks_run_budget_gap": float(budget_gap_t.to(dtype=torch.float32).mean().detach().cpu().item()),
-                "surrogate_kv_headwise_child_mean_surrogate_kv_selected_surrogates": float(surrogate_regions_t.to(dtype=torch.float32).mean().detach().cpu().item()),
+                "surrogate_kv_headwise_child_mean_ks_run_raw_tokens": float(
+                    raw_tokens_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
+                "surrogate_kv_headwise_child_mean_ks_run_raw_regions": float(
+                    sum(raw_regions_per_head) / max(1, len(raw_regions_per_head))
+                ),
+                "surrogate_kv_headwise_child_mean_ks_run_surrogate_regions": float(
+                    surrogate_regions_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
+                "surrogate_kv_headwise_child_mean_ks_run_surrogate_tokens": float(
+                    surrogate_tokens_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
+                "surrogate_kv_headwise_child_mean_ks_run_drop_tokens": float(
+                    drop_tokens_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
+                "surrogate_kv_headwise_child_mean_ks_run_used_entries": float(
+                    used_entries_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
+                "surrogate_kv_headwise_child_mean_ks_run_budget_gap": float(
+                    budget_gap_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
+                "surrogate_kv_headwise_child_mean_surrogate_kv_selected_surrogates": float(
+                    surrogate_regions_t.to(dtype=torch.float32).mean().detach().cpu().item()
+                ),
                 "surrogate_kv_ada_overlay_selected_surrogates": int(accepted_surrogates.sum()),
                 "surrogate_kv_ada_overlay_selected_gain": float(selected_gain_total),
                 "surrogate_kv_ada_overlay_sold_raw_value": float(sold_raw_total),
@@ -665,8 +683,14 @@ class HeadwiseRuntimeMixin(HeadwisePrototypeBankMixin, HeadwiseAdaOverlayMixin):
     def update_kv_headwise(self, key_states, query_states, value_states, attention_mask=None, num_key_value_groups=1):
         update_start = time.perf_counter()
         del attention_mask
+        if any(states.ndim != 4 for states in (key_states, query_states, value_states)):
+            raise ValueError("SurKV headwise inputs must use [batch, heads, sequence, head_dim] layout.")
+        if key_states.shape != value_states.shape:
+            raise ValueError("SurKV headwise key and value states must have matching shapes.")
+        if key_states.shape[0] != query_states.shape[0] or key_states.shape[-1] != query_states.shape[-1]:
+            raise ValueError("SurKV headwise key/query batch and head dimensions must match.")
         if key_states.shape[-2] != query_states.shape[-2]:
-            raise ValueError("SurKV headwise path requires key/query sequence lengths to match.")
+            raise ValueError("SurKV headwise key/query sequence lengths must match.")
 
         bsz, query_heads, q_len, head_dim = query_states.shape
         key_heads = int(key_states.shape[1])
@@ -678,7 +702,13 @@ class HeadwiseRuntimeMixin(HeadwisePrototypeBankMixin, HeadwiseAdaOverlayMixin):
                 "for headwise Ada packing."
             )
 
-        groups = max(1, int(num_key_value_groups or (int(query_heads) // max(1, int(key_heads)))))
+        expected_groups = int(query_heads) // max(1, int(key_heads))
+        groups = max(1, int(num_key_value_groups or expected_groups))
+        if groups != expected_groups:
+            raise ValueError(
+                f"num_key_value_groups must be {expected_groups} for {query_heads} query heads "
+                f"and {key_heads} key/value heads; received {groups}."
+            )
         configured_keep_ratio = min(1.0, float(self.max_capacity_prompt) / max(float(q_len), 1.0))
         if self.layer_keep_ratio is not None:
             configured_keep_ratio = min(1.0, max(1.0 / max(q_len, 1), float(self.layer_keep_ratio)))

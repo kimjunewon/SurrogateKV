@@ -372,12 +372,11 @@ def allocate_surrogate_regions(
 ):
     """SurrogateKV allocator.
 
-    Single-ledger frontier exchange.  The allocator builds one raw
-    frontier, generates K-D-K residual packets from that frontier, and
-    admits each packet only when the same budget ledger can pay for the
-    surrogate slot and immediately buy back whole raw atoms with any freed
-    entries.  There is no terminal repair/fill pass: budget accounting is
-    part of admission.
+    Single-ledger frontier exchange. The allocator builds one raw frontier,
+    generates K-D-K residual packets from that frontier, and admits each
+    packet only when the same budget ledger can pay for the surrogate slot.
+    Freed slots and any residual whole-atom slack are refilled with raw atoms
+    under that ledger.
     """
     del chunk_lengths
     rank01 = _rank01 if _rank01_fn is None else _rank01_fn

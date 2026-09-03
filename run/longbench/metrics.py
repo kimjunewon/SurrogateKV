@@ -38,12 +38,10 @@ def qa_f1_score(prediction: str, ground_truth: str, **kwargs: object) -> float:
 def qa_f1_zh_score(prediction: str, ground_truth: str, **kwargs: object) -> float:
     try:
         import jieba
-
-        prediction_tokens = [normalize_zh_answer(token) for token in jieba.cut(prediction, cut_all=False)]
-        ground_truth_tokens = [normalize_zh_answer(token) for token in jieba.cut(ground_truth, cut_all=False)]
-    except ImportError:
-        prediction_tokens = list(normalize_zh_answer(prediction))
-        ground_truth_tokens = list(normalize_zh_answer(ground_truth))
+    except ImportError as exc:
+        raise RuntimeError("Chinese LongBench metrics require the 'jieba' package.") from exc
+    prediction_tokens = [normalize_zh_answer(token) for token in jieba.cut(prediction, cut_all=False)]
+    ground_truth_tokens = [normalize_zh_answer(token) for token in jieba.cut(ground_truth, cut_all=False)]
     prediction_tokens = [token for token in prediction_tokens if token]
     ground_truth_tokens = [token for token in ground_truth_tokens if token]
     return f1_score(prediction_tokens, ground_truth_tokens, **kwargs)
@@ -52,20 +50,21 @@ def qa_f1_zh_score(prediction: str, ground_truth: str, **kwargs: object) -> floa
 def rouge_score(prediction: str, ground_truth: str, **_: object) -> float:
     try:
         from rouge import Rouge
-
+    except ImportError as exc:
+        raise RuntimeError("LongBench summarization metrics require the 'rouge' package.") from exc
+    try:
         return Rouge().get_scores([prediction], [ground_truth], avg=True)["rouge-l"]["f"]
-    except Exception:
+    except ValueError:
         return 0.0
 
 
 def rouge_zh_score(prediction: str, ground_truth: str, **kwargs: object) -> float:
     try:
         import jieba
-
-        prediction = " ".join(jieba.cut(prediction, cut_all=False))
-        ground_truth = " ".join(jieba.cut(ground_truth, cut_all=False))
-    except ImportError:
-        pass
+    except ImportError as exc:
+        raise RuntimeError("Chinese LongBench metrics require the 'jieba' package.") from exc
+    prediction = " ".join(jieba.cut(prediction, cut_all=False))
+    ground_truth = " ".join(jieba.cut(ground_truth, cut_all=False))
     return rouge_score(prediction, ground_truth, **kwargs)
 
 
@@ -102,15 +101,13 @@ def count_score(prediction: str, ground_truth: str, **_: object) -> float:
 
 
 def code_sim_score(prediction: str, ground_truth: str, **_: object) -> float:
+    candidate = ""
     for line in prediction.lstrip("\n").split("\n"):
         if "`" not in line and "#" not in line and "//" not in line:
             candidate = line
             break
-    else:
-        candidate = prediction
     try:
         from fuzzywuzzy import fuzz
-
-        return fuzz.ratio(candidate, ground_truth) / 100.0
-    except ImportError:
-        return 1.0 if candidate.strip() == ground_truth.strip() else 0.0
+    except ImportError as exc:
+        raise RuntimeError("LongBench code metrics require the 'fuzzywuzzy' package.") from exc
+    return fuzz.ratio(candidate, ground_truth) / 100.0

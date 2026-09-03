@@ -23,7 +23,10 @@ do not require the companion workspace.
 - LongBench model: LLaMA-3-8B-Instruct
 - NIAH model: Mistral-7B-Instruct-v0.2
 - Main cache budgets: `B_KV` in `{64, 128, 256, 512, 1024, 2048}`
-- Local max-pooling window: `7`
+- Recent-query window: `32` for the shared-token and head-wise profiles; `8`
+  for the DynamicKV layer-wise profile
+- Local pooling width: `7` (max pooling for the shared-token and head-wise
+  profiles; average pooling for the DynamicKV layer-wise profile)
 - Allocation atom size: `4`
 - Decoding: deterministic, using each benchmark's official prompt and output settings
 - Hardware: NVIDIA A100 80GB PCIe; Intel Xeon Gold 6338 CPU
@@ -37,6 +40,11 @@ surrogates. The released head-wise profile selects the highest-salience
 representative KV pair within each admitted region. Set
 `SURKV_HEADWISE_SURROGATE_PROTO=mean` to select mean-plus-norm construction for
 head-wise runs.
+
+The current prefill compression paths use evaluation batch size 1. Prediction
+outputs are grouped by model and budget; pass one such directory (for example,
+`runs/longbench/meta-llama-3-8b-instruct_budget_128`) to
+`run/longbench/eval.py`.
 
 ## Released Checks
 

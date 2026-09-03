@@ -61,6 +61,74 @@ class RuntimeSmokeTests(unittest.TestCase):
                 self.assertEqual(compressed_k.shape, compressed_v.shape)
                 self.assertEqual(compressed_k.shape[-2], 16)
 
+    def test_shared_token_path_rejects_multi_example_batches(self) -> None:
+        cluster = SurKVCluster(
+            mode="surrogate_kv",
+            window_size=8,
+            max_capacity_prompt=16,
+            kernel_size=3,
+            chunk_size=4,
+        )
+        states = torch.randn(2, 2, 32, 8)
+        with self.assertRaisesRegex(ValueError, "batch size 1"):
+            cluster.update_kv(
+                states,
+                states,
+                states,
+                attention_mask=None,
+                num_key_value_groups=1,
+            )
+
+    def test_shared_token_path_rejects_mismatched_value_shape(self) -> None:
+        cluster = SurKVCluster(
+            mode="surrogate_kv",
+            window_size=8,
+            max_capacity_prompt=16,
+            kernel_size=3,
+            chunk_size=4,
+        )
+        with self.assertRaisesRegex(ValueError, "key and value states"):
+            cluster.update_kv(
+                self.key_states,
+                self.query_states,
+                self.value_states[:, :, :-1, :],
+                attention_mask=None,
+                num_key_value_groups=1,
+            )
+
+    def test_configuration_validation(self) -> None:
+        invalid_cases = (
+            ({"mode": "unknown"}, "Unsupported SurKV mode"),
+            ({"window_size": 16}, "window_size"),
+            ({"window_size": 0}, "window_size"),
+            ({"window_size": -1}, "window_size"),
+            ({"kernel_size": 4}, "kernel_size"),
+            ({"chunk_size": 0}, "chunk_size"),
+            ({"pooling": "median"}, "pooling"),
+        )
+        defaults = {
+            "mode": "surrogate_kv",
+            "window_size": 8,
+            "max_capacity_prompt": 16,
+            "kernel_size": 3,
+            "chunk_size": 4,
+        }
+        for overrides, message in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(ValueError, message):
+                    SurKVCluster(**(defaults | overrides))
+
+    def test_dynamic_profile_uses_average_pooling(self) -> None:
+        snap = SurKVCluster(mode="surrogate_kv", window_size=8, max_capacity_prompt=16, kernel_size=3)
+        dynamic = SurKVCluster(
+            mode="surrogate_kv_dynamic_layer",
+            window_size=8,
+            max_capacity_prompt=16,
+            kernel_size=3,
+        )
+        self.assertEqual(snap.pooling, "maxpool")
+        self.assertEqual(dynamic.pooling, "avgpool")
+
     def test_ada_rejects_shared_token_entry_point(self) -> None:
         cluster = SurKVCluster(
             mode="surrogate_kv_ada",
@@ -106,6 +174,44 @@ class RuntimeSmokeTests(unittest.TestCase):
                 self.assertEqual(compressed_k.shape[-1], 8)
                 self.assertLessEqual(compressed_k.shape[0], 2 * 16)
                 self.assertEqual(cluster.last_stats["surrogate_kv_headwise_budget_preserved"], 1)
+
+    def test_ada_headwise_gqa_path_preserves_budget(self) -> None:
+        key_states = torch.randn(1, 2, 48, 8)
+        query_states = torch.randn(1, 4, 48, 8)
+        value_states = torch.randn(1, 2, 48, 8)
+        cluster = SurKVCluster(
+            mode="surrogate_kv_ada",
+            window_size=8,
+            max_capacity_prompt=16,
+            kernel_size=3,
+            chunk_size=4,
+        )
+        compressed_k, compressed_v = cluster.update_kv_headwise(
+            key_states,
+            query_states,
+            value_states,
+            attention_mask=None,
+            num_key_value_groups=2,
+        )
+        self.assertEqual(compressed_k.shape, compressed_v.shape)
+        self.assertEqual(cluster.last_stats["surrogate_kv_headwise_budget_preserved"], 1)
+
+    def test_ada_headwise_rejects_mismatched_value_shape(self) -> None:
+        cluster = SurKVCluster(
+            mode="surrogate_kv_ada",
+            window_size=8,
+            max_capacity_prompt=16,
+            kernel_size=3,
+            chunk_size=4,
+        )
+        with self.assertRaisesRegex(ValueError, "key and value states"):
+            cluster.update_kv_headwise(
+                self.key_states,
+                self.query_states,
+                self.value_states[:, :, :-1, :],
+                attention_mask=None,
+                num_key_value_groups=1,
+            )
 
 
 class ScheduleTests(unittest.TestCase):

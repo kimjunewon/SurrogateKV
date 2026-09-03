@@ -53,6 +53,8 @@ def parse_csv_list(raw: str) -> list[str]:
 
 
 def scorer(dataset: str, rows: list[dict[str, object]]) -> float:
+    if not rows:
+        raise ValueError(f"No predictions found for dataset {dataset!r}.")
     metric = DATASET2METRIC[dataset]
     total = 0.0
     for row in rows:
@@ -60,9 +62,11 @@ def scorer(dataset: str, rows: list[dict[str, object]]) -> float:
         if dataset in {"trec", "triviaqa", "samsum", "lsht"}:
             prediction = prediction.lstrip("\n").split("\n")[0]
         answers = row.get("answers") or []
+        if not answers:
+            raise ValueError(f"Prediction row for dataset {dataset!r} has no reference answers.")
         all_classes = row.get("all_classes") or []
         total += max(metric(prediction, str(answer), all_classes=all_classes) for answer in answers)
-    return round(100.0 * total / max(len(rows), 1), 2)
+    return round(100.0 * total / len(rows), 2)
 
 
 def load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -83,7 +87,11 @@ def main() -> None:
 
     datasets = parse_csv_list(args.datasets)
     methods = parse_csv_list(args.methods)
+    unknown_datasets = sorted(set(datasets) - DATASET2METRIC.keys())
+    if unknown_datasets:
+        parser.error(f"unsupported dataset(s): {', '.join(unknown_datasets)}")
     result_rows = [["dataset", *datasets]]
+    evaluated = 0
 
     for method in methods:
         method_scores = [method]
@@ -94,11 +102,18 @@ def main() -> None:
                 continue
             rows = load_jsonl(prediction_path)
             score = scorer(dataset, rows)
+            evaluated += 1
             method_scores.append(score)
-            with (prediction_path.parent / "metrics.json").open("w", encoding="utf-8") as handle:
+            with (prediction_path.parent / f"{method}.metrics.json").open("w", encoding="utf-8") as handle:
                 json.dump({dataset: score}, handle, ensure_ascii=False, indent=2)
             print(f"dataset {dataset} method {method} score {score}")
         result_rows.append(method_scores)
+
+    if evaluated == 0:
+        raise FileNotFoundError(
+            f"No prediction files found under {args.results_dir}. "
+            "Pass one <model>_budget_<B> result directory."
+        )
 
     args.results_dir.mkdir(parents=True, exist_ok=True)
     with (args.results_dir / "results.csv").open("w", encoding="utf-8", newline="") as handle:

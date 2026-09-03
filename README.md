@@ -55,9 +55,9 @@ Python 3.10 or newer is required. Install the LongBench dependencies with:
 python3 -m pip install -e ".[longbench]"
 ```
 
-The exact versions used for the paper experiments are recorded in
-[`requirements/paper.txt`](requirements/paper.txt) for controlled reproduction.
-They are historical pins; use the standard installation above for ordinary use.
+The core framework versions reported for the paper experiments are recorded in
+[`docs/PAPER_ENVIRONMENT.md`](docs/PAPER_ENVIRONMENT.md). They are historical
+environment metadata; use the standard installation above for ordinary use.
 
 ## Variants
 
@@ -80,7 +80,7 @@ head-wise mode.
 
 The cache adapter calls `SurKVCluster` after prefill attention scores are
 available. Tensors use the standard `[batch, heads, sequence, head_dim]`
-layout.
+layout. The current prefill path supports batch size 1.
 
 ```python
 from surrogatekv import SurKVCluster
@@ -90,7 +90,6 @@ cluster = SurKVCluster(
     window_size=32,
     max_capacity_prompt=512,
     kernel_size=7,
-    chunk_size=16,
 )
 
 compressed_k, compressed_v = cluster.update_kv(
@@ -101,6 +100,10 @@ compressed_k, compressed_v = cluster.update_kv(
     num_key_value_groups=num_key_value_groups,
 )
 ```
+
+The paper setting uses allocation atoms of size `c = 4`, controlled by
+`SURKV_ATOM_SIZE` and used by default. The runtime's `chunk_size` is a separate
+coarse-region parameter and defaults to 32.
 
 The Ada-KV variant preserves a head-specific cache layout and therefore uses
 `update_kv_headwise()` instead of `update_kv()`. Calling the shared-token entry
@@ -129,10 +132,13 @@ Saved predictions can be evaluated independently:
 
 ```bash
 python3 run/longbench/eval.py \
-  --results_dir runs/longbench \
+  --results_dir runs/longbench/meta-llama-3-8b-instruct_budget_128 \
   --datasets qasper,multifieldqa_en,hotpotqa \
   --methods SurrogateKV,SurrogateKV-Dynamic,SurrogateKV-Ada
 ```
+
+Evaluate one model-and-budget directory at a time; prediction outputs are
+stored as `<model>_budget_<B>/<dataset>/<method>.json`.
 
 See [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md) for the evaluation
 scope, reported environment, and released artifacts.
@@ -150,11 +156,11 @@ LLaMA-3-8B-Instruct at `B_KV = 512` (FullKV: 41.92):
 | Head-wise | Ada-KV | 40.77 | SurrogateKV-Ada | **41.26** | +0.49 |
 
 <p align="center">
-  <a href="data/images/longbench_budget_results.pdf">
+  <a href="data/images/longbench_budget_sweep.pdf">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="data/images/longbench_budget_results-dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset="data/images/longbench_budget_results.svg">
-      <img src="data/images/longbench_budget_results.svg" alt="LongBench scores across KV cache budgets" width="860">
+      <source media="(prefers-color-scheme: dark)" srcset="data/images/longbench_budget_sweep-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="data/images/longbench_budget_sweep.svg">
+      <img src="data/images/longbench_budget_sweep.svg" alt="LongBench scores across KV cache budgets" width="860">
     </picture>
   </a>
 </p>

@@ -172,13 +172,33 @@ class SurKVCluster(
         score_method: str | None,
         head_score_fusion: str | None,
     ) -> None:
+        if mode not in MODE_TO_SPEC:
+            supported = ", ".join(sorted(MODE_TO_SPEC))
+            raise ValueError(f"Unsupported SurKV mode: {mode!r}. Expected one of: {supported}.")
+
+        window_size = int(window_size)
+        max_capacity_prompt = int(max_capacity_prompt)
+        kernel_size = int(kernel_size)
+        chunk_size = int(chunk_size)
+        if max_capacity_prompt <= 0:
+            raise ValueError("max_capacity_prompt must be positive.")
+        if window_size <= 0 or window_size >= max_capacity_prompt:
+            raise ValueError("window_size must be positive and smaller than max_capacity_prompt.")
+        if kernel_size <= 0 or kernel_size % 2 == 0:
+            raise ValueError("kernel_size must be a positive odd integer.")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive.")
+
         self.mode = mode
         self.spec: MethodSpec = MODE_TO_SPEC[mode]
         self.window_size = window_size
         self.max_capacity_prompt = max_capacity_prompt
         self.kernel_size = kernel_size
-        if self.spec.mode == "surrogate_kv_dynamic_layer" and str(pooling).strip().lower() == "maxpool":
+        pooling = str(pooling).strip().lower()
+        if self.spec.mode == "surrogate_kv_dynamic_layer" and pooling == "maxpool":
             pooling = "avgpool"
+        if pooling not in {"avgpool", "maxpool"}:
+            raise ValueError("pooling must be 'avgpool' or 'maxpool'.")
         self.pooling = pooling
         self.chunk_size = chunk_size
         self.local_radius = local_radius
@@ -225,7 +245,14 @@ class SurKVCluster(
             )
         update_start = time.perf_counter()
         del attention_mask
-        assert key_states.shape[-2] == query_states.shape[-2]
+        if any(states.ndim != 4 for states in (key_states, query_states, value_states)):
+            raise ValueError("SurKV inputs must use [batch, heads, sequence, head_dim] layout.")
+        if key_states.shape != value_states.shape:
+            raise ValueError("SurKV key and value states must have matching shapes.")
+        if key_states.shape[0] != query_states.shape[0] or key_states.shape[-1] != query_states.shape[-1]:
+            raise ValueError("SurKV key/query batch and head dimensions must match.")
+        if key_states.shape[-2] != query_states.shape[-2] or value_states.shape[-2] != query_states.shape[-2]:
+            raise ValueError("SurKV requires key, query, and value sequence lengths to match during prefill.")
         self.last_layout_meta = None
         self._last_allocator_stats = {}
         self._last_score_stats = {}
@@ -235,7 +262,19 @@ class SurKVCluster(
         self._last_layer_budget_curve = None
         self._headwise_cache_query_repeated = False
 
-        bsz, _, q_len, head_dim = query_states.shape
+        bsz, query_heads, q_len, head_dim = query_states.shape
+        if int(bsz) != 1:
+            raise ValueError("SurKV prefill compression currently supports batch size 1.")
+        key_heads = int(key_states.shape[1])
+        if int(query_heads) % max(1, key_heads) != 0:
+            raise ValueError(f"query heads ({query_heads}) must be divisible by key/value heads ({key_heads}).")
+        expected_groups = int(query_heads) // max(1, key_heads)
+        groups = max(1, int(num_key_value_groups or expected_groups))
+        if int(query_heads) != key_heads and groups != expected_groups:
+            raise ValueError(
+                f"num_key_value_groups must be {expected_groups} for {query_heads} query heads "
+                f"and {key_heads} key/value heads; received {groups}."
+            )
         timing_breakdown = {
             "score": 0.0,
             "planning": 0.0,
@@ -395,7 +434,7 @@ class SurKVCluster(
                 recent_len=recent_len,
                 past_len=past_len,
                 head_dim=head_dim,
-                num_key_value_groups=num_key_value_groups,
+                num_key_value_groups=groups,
                 base_capacity_prompt=effective_capacity_prompt,
                 sink_len=sink_len,
             )
@@ -418,7 +457,7 @@ class SurKVCluster(
                 compressible_start=compressible_start,
                 past_len=past_len,
                 base_capacity_prompt=ledger_base_capacity_prompt,
-                num_key_value_groups=num_key_value_groups,
+                num_key_value_groups=groups,
             )
             self._last_allocator_stats.update(
                 {

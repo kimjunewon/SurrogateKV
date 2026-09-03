@@ -60,12 +60,18 @@ denotes selective admission with the mean-plus-norm constructor and atom size
 | `comparisons/merging_longbench_summary.csv` | CaM, D2O, and SurrogateKV-Snap averages at two settings |
 | `comparisons/merging_longbench_per_dataset.csv` | Per-dataset values for the same comparison |
 | `efficiency/llama3_8b_instruct_b128.csv` | TTFT, decode throughput, latency, and resident KV footprint |
-| `scaling/qwen25_longbench.csv` | Matched Qwen2.5-14B/72B LongBench task results |
+| `scaling/qwen25_longbench.csv` | Matched Qwen2.5-14B/72B LongBench task averages |
+| `scaling/qwen25_longbench_per_task.csv` | Per-task values underlying the Qwen2.5 averages |
 
 D2O uses its released retention-ratio parameterization targeting approximately
 128 and 512 states; CaM and SurrogateKV use fixed slot budgets. The serving
 CSV uses `B_KV = 128`; resident-KV columns exclude temporary construction
 buffers, as specified in the paper.
+
+The Qwen2.5-14B averages cover NarrativeQA, Qasper, HotpotQA, GovReport,
+PassageRetrieval-en, and LCC with 20 examples per task. The Qwen2.5-72B
+averages cover Qasper, HotpotQA, PassageRetrieval-en, and LCC with 10 examples
+per task. Both methods use the same examples within each model and budget.
 
 ### Figures
 

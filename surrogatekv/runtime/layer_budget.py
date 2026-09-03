@@ -571,7 +571,10 @@ class LayerBudgetMixin:
                 if int(target_min) <= int(point.get("capacity", 0)) <= int(target_max)
             ]
             if not valid_points:
-                target_capacity = max(int(target_min), min(int(target_max), int(round(float(remaining_capacity) / float(remaining_layers)))))
+                target_capacity = max(
+                    int(target_min),
+                    min(int(target_max), int(round(float(remaining_capacity) / float(remaining_layers)))),
+                )
             else:
                 current_signal = float(getattr(self, "_last_layer_budget_signal", 0.0) or 0.0)
                 marginal_ema = float(ledger.get("true_dynamic_marginal_ema", 0.0) or 0.0)
@@ -635,9 +638,13 @@ class LayerBudgetMixin:
             exact_upper = max(1, int(remaining_capacity) - future_floor)
             exact_lower = int(remaining_capacity) - future_ceiling
             if target_capacity > exact_upper:
-                target_capacity = int(round(float(target_capacity) - (float(target_capacity) - float(exact_upper)) * float(ledger_strength)))
+                target_capacity = int(
+                    round(float(target_capacity) - (float(target_capacity) - float(exact_upper)) * float(ledger_strength))
+                )
             if target_capacity < exact_lower:
-                target_capacity = int(round(float(target_capacity) + (float(exact_lower) - float(target_capacity)) * float(ledger_strength)))
+                target_capacity = int(
+                    round(float(target_capacity) + (float(exact_lower) - float(target_capacity)) * float(ledger_strength))
+                )
 
         target_capacity = max(int(hard_min_capacity), min(int(hard_max_capacity), int(target_capacity)))
         target_capacity = max(1, min(int(q_len), int(target_capacity)))
