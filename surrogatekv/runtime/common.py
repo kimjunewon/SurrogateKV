@@ -57,6 +57,8 @@ def _env_flag(name: str, default: bool = False) -> bool:
 _SURKV_HEADWISE_ADA_OVERLAY = _env_flag("SURKV_HEADWISE_ADA_OVERLAY", False)
 
 
+# Adapted and modified from transformers.models.llama.modeling_llama.repeat_kv
+# (Apache-2.0). See THIRD_PARTY_NOTICES.md.
 def _repeat_kv_heads(states: torch.Tensor, groups: int) -> torch.Tensor:
     groups = max(1, int(groups))
     if groups == 1:

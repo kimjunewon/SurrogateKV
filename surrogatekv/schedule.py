@@ -1,7 +1,3 @@
-# Budget scheduling integration developed with reference to
-# KVCache-Factory/PyramidKV and AdaKV (MIT), with SurrogateKV modifications.
-# See NOTICE and THIRD_PARTY_LICENSES.md.
-
 from __future__ import annotations
 
 import math

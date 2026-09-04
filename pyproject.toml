@@ -8,8 +8,10 @@ version = "0.1.0"
 description = "Representation-preserving KV-cache compression for long-context LLMs"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"]
+# Original SurrogateKV material is proprietary; Apache-2.0 and MIT apply only
+# to the third-party-derived portions identified in THIRD_PARTY_NOTICES.md.
+license = "LicenseRef-Proprietary AND Apache-2.0 AND MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "legal/third-party/*.txt"]
 authors = [
     {name = "Junwon Kim"},
     {name = "Junghyun Ryu"},

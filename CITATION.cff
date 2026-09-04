@@ -5,7 +5,6 @@ type: software
 version: 0.1.0
 date-released: 2026-09-01
 repository-code: "https://github.com/kimjunewon/SurrogateKV"
-license: Apache-2.0
 authors:
   - family-names: Kim
     given-names: Junwon

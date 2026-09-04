@@ -2,7 +2,7 @@
 
 # Evaluation flow and dataset-to-metric mapping adapted from THUDM/LongBench
 # (MIT License). Copyright (c) 2023 THU-KEG & Zhipu AI.
-# See THIRD_PARTY_LICENSES.md.
+# See THIRD_PARTY_NOTICES.md.
 
 from __future__ import annotations
 

@@ -228,17 +228,13 @@ python3 -m ruff check surrogatekv run tests scripts
 
 Machine-readable citation metadata is available in [`CITATION.cff`](CITATION.cff).
 
-## License and Third-Party Attribution
+## Copyright and Third-Party Notices
 
-SurrogateKV is released under the [Apache License 2.0](LICENSE). The runtime
-and evaluation interfaces were developed with reference to the official
-implementations of [SnapKV](https://github.com/FasterDecoding/SnapKV),
-[PyramidKV/KVCache-Factory](https://github.com/Zefan-Cai/KVCache-Factory), and
-[AdaKV](https://github.com/FFY0/AdaKV). The evaluator includes code adapted
-from [LongBench](https://github.com/THUDM/LongBench). The paper also evaluates
-or discusses [H2O](https://github.com/FMInference/H2O),
-[DynamicKV](https://github.com/DreamMr/DynamicKV),
-[CaM](https://github.com/zyxxmu/cam), and
-[D2O](https://github.com/AIoT-MLSys-Lab/D2O).
-Third-party license notices are collected in
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+Copyright (c) 2026 Junwon Kim. All rights reserved. No license is granted for
+SurrogateKV's original code, documentation, data, figures, or other original
+material.
+
+The identified third-party-derived portions remain subject to their original
+copyright notices and license terms. Those terms do not license SurrogateKV's
+original material. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for
+the applicable files, upstream sources, and full license texts.

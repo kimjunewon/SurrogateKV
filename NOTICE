@@ -1,7 +1,0 @@
-SurrogateKV
-Copyright 2026 SurrogateKV authors
-
-This product contains evaluation code adapted from LongBench and runtime code
-developed from or with reference to SnapKV, PyramidKV/KVCache-Factory, and
-AdaKV. Their original copyright notices and license terms remain in force.
-See THIRD_PARTY_LICENSES.md for attribution and license details.
