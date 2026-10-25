@@ -175,6 +175,42 @@ class RuntimeSmokeTests(unittest.TestCase):
                 self.assertLessEqual(compressed_k.shape[0], 2 * 16)
                 self.assertEqual(cluster.last_stats["surrogate_kv_headwise_budget_preserved"], 1)
 
+    def test_ada_default_prototypes_match_dynamic_mean_constructor(self) -> None:
+        key_states = self.key_states[:, :, :11, :]
+        value_states = self.value_states[:, :, :11, :]
+        scores = torch.arange(11, dtype=torch.float32).repeat(2, 1)
+        spans = [(0, 4), (4, 11)]
+        dynamic = SurKVCluster(
+            mode="surrogate_kv_dynamic_layer", window_size=8, max_capacity_prompt=16, kernel_size=3
+        )
+        expected_k, expected_v, *_ = dynamic._dynamic_micro_prototype_bank(
+            key_states=key_states,
+            value_states=value_states,
+            token_scores=scores[:1],
+            chunk_slices=spans,
+            surrogate_mode=dynamic.spec.surrogate_mode,
+        )
+        ada = SurKVCluster(mode="surrogate_kv_ada", window_size=8, max_capacity_prompt=16, kernel_size=3)
+        for prototype_mode in (None, "", "mean"):
+            with self.subTest(prototype_mode=prototype_mode), patch.dict(os.environ):
+                os.environ.pop("SURKV_HEADWISE_SURROGATE_PROTO", None)
+                if prototype_mode is not None:
+                    os.environ["SURKV_HEADWISE_SURROGATE_PROTO"] = prototype_mode
+                # Include a multi-atom region, a short tail, and different spans per head.
+                outputs = ada._headwise_norm_rms_prototypes_from_spans_batch(
+                    key_states=key_states,
+                    value_states=value_states,
+                    head_scores=scores,
+                    head_spans=[spans, spans[1:]],
+                    base_start=0,
+                    base_end=11,
+                    micro_len=4,
+                )
+                for head_idx, (actual_k, actual_v) in enumerate(outputs):
+                    region_start = head_idx
+                    torch.testing.assert_close(actual_k, expected_k[:, head_idx : head_idx + 1, region_start:])
+                    torch.testing.assert_close(actual_v, expected_v[:, head_idx : head_idx + 1, region_start:])
+
     def test_ada_headwise_gqa_path_preserves_budget(self) -> None:
         key_states = torch.randn(1, 2, 48, 8)
         query_states = torch.randn(1, 4, 48, 8)
