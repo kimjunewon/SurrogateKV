@@ -1,8 +1,44 @@
-# SurrogateKV
+<p align="center">
+  <a href="https://www.sogang.ac.kr/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/sogang-logo-dark.svg">
+      <img src="docs/sogang-logo.svg" alt="Sogang University" height="44">
+    </picture>
+  </a>
+  &nbsp;
+  <a href="https://discos.sogang.ac.kr/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/discos-logo-dark.png">
+      <img src="docs/discos-logo.png" alt="DISCOS Lab" height="44">
+    </picture>
+  </a>
+</p>
 
-Official implementation and result release for **SurrogateKV:
-Representation-Preserving KV Cache Compression for Long-Context LLMs**
-(Findings of EMNLP 2026).
+<h1 align="center">SurrogateKV</h1>
+
+<p align="center">
+  <strong>Representation-Preserving KV Cache Compression<br>for Long-Context LLMs</strong><br>
+  Findings of EMNLP 2026
+</p>
+
+<p align="center">
+  <a href="mailto:kimjunewon@sogang.ac.kr"><img src="https://img.shields.io/badge/Email-Contact_author-A50034?style=for-the-badge" alt="Email Junwon Kim" height="30"></a>
+  <a href="https://discos.sogang.ac.kr/"><img src="https://img.shields.io/badge/DISCOS-Lab_website-155B96?style=for-the-badge" alt="DISCOS Lab website" height="30"></a>
+  <a href="https://github.com/kimjunewon/SurrogateKV/tree/main/surrogatekv"><img src="https://img.shields.io/badge/GitHub-Source_code-24292F?style=for-the-badge&logo=github&logoColor=white" alt="GitHub source code" height="30"></a>
+  <a href="docs/EMNLP2026_Find-6068.pdf"><img src="https://img.shields.io/badge/Poster-PDF-A50034?style=for-the-badge" alt="View poster PDF" height="30"></a>
+</p>
+
+<p align="center">
+  <strong>Junwon Kim</strong> &middot; DISCOS Lab, Sogang University<br>
+  <a href="mailto:kimjunewon@sogang.ac.kr">kimjunewon@sogang.ac.kr</a>
+</p>
+
+<p align="center">
+  <a href="docs/EMNLP2026_Find-6068.pdf">
+    <img src="docs/EMNLP2026_Find-6068_preview.png" alt="SurrogateKV EMNLP 2026 poster. Click to open the PDF." width="320">
+  </a><br>
+  <a href="docs/EMNLP2026_Find-6068.pdf"><strong>View the EMNLP 2026 poster (PDF)</strong></a>
+</p>
 
 Token-level KV compressors ordinarily retain selected entries and discard the
 rest. SurrogateKV adds a third representation under the same cache-slot
