@@ -28,8 +28,7 @@ SurrogateKV-Snap, SurrogateKV-Dynamic, and SurrogateKV-Ada.
 
 The editable source for the overview is available as a
 [draw.io file](../data/images/source/surrogatekv_overview.drawio). The diagram
-shows the mean-plus-norm constructor; the released head-wise profile is noted
-under [Variants](#variants).
+shows the mean-plus-norm constructor used by all three variants.
 
 ## Variants
 
@@ -42,8 +41,7 @@ under [Variants](#variants).
 `SurrogateKV` is an alias of `SurrogateKV-Snap`. Method names and aliases are
 available through `SURROGATEKV_METHOD_TO_MODE`.
 
-The shared-token and layer-wise modes use mean-pooled, norm-calibrated
-surrogate KV pairs. The released head-wise profile uses the highest-salience
-representative KV pair in each admitted region. Set
-`SURKV_HEADWISE_SURROGATE_PROTO=mean` to use mean-plus-norm construction in
-head-wise mode.
+All three variants use mean-pooled, norm-calibrated surrogate KV pairs by
+default, as in the paper experiments. In head-wise mode,
+`SURKV_HEADWISE_SURROGATE_PROTO=peak` explicitly enables an experimental
+highest-salience representative instead; it is not the paper configuration.

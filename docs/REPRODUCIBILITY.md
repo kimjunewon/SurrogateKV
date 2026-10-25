@@ -35,11 +35,11 @@ do not require the companion workspace.
 One retained raw KV pair and one surrogate KV pair each consume one resident
 slot. Generated-token KV is appended identically for all methods.
 
-The shared-token and layer-wise modes construct mean-pooled, norm-calibrated
-surrogates. The released head-wise profile selects the highest-salience
-representative KV pair within each admitted region. Set
-`SURKV_HEADWISE_SURROGATE_PROTO=mean` to select mean-plus-norm construction for
-head-wise runs.
+All three variants construct mean-pooled, norm-calibrated surrogates in the
+paper experiments and by default in the runtime. For head-wise runs,
+`SURKV_HEADWISE_SURROGATE_PROTO` may be left unset or set to `mean`.
+The explicit `peak` override selects a highest-salience representative and
+is an experimental alternative, not the paper configuration.
 
 The current prefill compression paths use evaluation batch size 1. Prediction
 outputs are grouped by model and budget; pass one such directory (for example,
