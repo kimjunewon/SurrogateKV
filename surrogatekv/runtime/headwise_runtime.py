@@ -499,8 +499,8 @@ class HeadwisePrototypeBankMixin:
             return [(empty_key, empty_value) for _ in head_spans]
 
         proto_mode = str(
-            os.environ.get("SURKV_HEADWISE_SURROGATE_PROTO", "peak")
-            or "peak"
+            os.environ.get("SURKV_HEADWISE_SURROGATE_PROTO", "mean")
+            or "mean"
         ).strip().lower()
         if (
             proto_mode in {"peak", "token", "representative", "rep"}
@@ -617,8 +617,8 @@ class HeadwisePrototypeBankMixin:
 
         value_norm_prefix = None
         if self.spec.surrogate_mode in _RMS_RESTORED_VALUE_MODES:
-            micro_value_norm = micro_value_bank.norm(dim=-1)
-            weighted_value_norm = micro_value_norm * micro_len_bank.view(1, 1, -1)
+            micro_value_norm_sq = micro_value_bank.square().sum(dim=-1)
+            weighted_value_norm = micro_value_norm_sq * micro_len_bank.view(1, 1, -1)
             zero_norm = weighted_value_norm.new_zeros((1, int(key_heads), 1))
             value_norm_prefix = torch.cat([zero_norm, weighted_value_norm.cumsum(dim=2)], dim=2)
 
@@ -666,9 +666,11 @@ class HeadwisePrototypeBankMixin:
             if value_norm_prefix is not None:
                 head_value_norm_prefix = value_norm_prefix[:, int(head_idx) : int(head_idx) + 1]
                 target_value_norm = (
-                    head_value_norm_prefix.index_select(2, ends_t)
-                    - head_value_norm_prefix.index_select(2, starts_t)
-                ) / denom.view(1, 1, -1)
+                    (
+                        head_value_norm_prefix.index_select(2, ends_t)
+                        - head_value_norm_prefix.index_select(2, starts_t)
+                    ) / denom.view(1, 1, -1)
+                ).clamp_min(1e-12).sqrt()
                 current_value_norm = proto_value.norm(dim=-1).clamp_min(1e-6)
                 proto_value = proto_value * (target_value_norm / current_value_norm).view(1, 1, -1, 1)
 
